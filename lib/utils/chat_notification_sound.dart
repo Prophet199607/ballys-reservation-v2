@@ -22,7 +22,7 @@ enum ChatNotificationSound {
       : ChatNotificationSoundStore.defaultChannelKey;
 
   String get label =>
-      this == ChatNotificationSound.appTone ? 'My Tone' : 'Phone default';
+      this == ChatNotificationSound.appTone ? 'My Tone' : 'Default';
 
   String get description => this == ChatNotificationSound.appTone
       ? 'The tone that ships with the app'
