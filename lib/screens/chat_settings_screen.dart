@@ -1,11 +1,14 @@
 import 'package:ballys_reservation_app/core/chat_colors.dart';
 import 'package:ballys_reservation_app/providers/chat_font_settings_provider.dart';
+import 'package:ballys_reservation_app/providers/chat_notification_sound_provider.dart';
 import 'package:ballys_reservation_app/providers/font_settings_provider.dart';
+import 'package:ballys_reservation_app/utils/chat_notification_sound.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Chat's own font settings, reached from the overflow menu in the chat list
-/// and inside a conversation. Deliberately separate from the app-wide
+/// Chat's own font and notification-tone settings, reached from the overflow
+/// menu in the chat list and inside a conversation. The typography here is
+/// deliberately separate from the app-wide
 /// "Font Size Settings" on the app Settings screen: changing one leaves the other
 /// alone, so the conversation can read like a messenger while the rest of the
 /// app keeps its display face.
@@ -22,6 +25,8 @@ class ChatSettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(chatFontSettingsProvider);
     final notifier = ref.read(chatFontSettingsProvider.notifier);
+    final sound = ref.watch(chatNotificationSoundProvider);
+    final soundNotifier = ref.read(chatNotificationSoundProvider.notifier);
 
     return ChatFontScope(
       child: Scaffold(
@@ -75,6 +80,23 @@ class ChatSettingsScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 8),
+            _sectionLabel('Notification sound'),
+            _buildCard(
+              child: Column(
+                children: [
+                  for (final option in ChatNotificationSound.values)
+                    _soundTile(
+                      option: option,
+                      selected: sound == option,
+                      onTap: () => soundNotifier.select(option),
+                      onPlay: option == ChatNotificationSound.appTone
+                          ? soundNotifier.preview
+                          : null,
+                    ),
+                ],
+              ),
+            ),
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -94,7 +116,8 @@ class ChatSettingsScreen extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Text(
                 'This size applies to chats only. The rest of the app follows '
-                'the font size in Settings.',
+                'the font size in Settings. The notification sound applies to '
+                'chat messages only and is kept by the reset above.',
                 style: TextStyle(
                   fontSize: 12,
                   color: Colors.grey.shade600,
@@ -120,6 +143,42 @@ class ChatSettingsScreen extends ConsumerWidget {
     trailing: Icon(
       selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
       color: selected ? ChatColors.primary : Colors.grey.shade400,
+    ),
+  );
+
+  /// One tone choice. The app's own tone gets a play button, so the user can
+  /// hear it before living with it; the phone default is whatever the system
+  /// plays and cannot be sampled from here.
+  Widget _soundTile({
+    required ChatNotificationSound option,
+    required bool selected,
+    required VoidCallback onTap,
+    VoidCallback? onPlay,
+  }) => ListTile(
+    onTap: onTap,
+    title: Text(
+      option.label,
+      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+    ),
+    subtitle: Text(
+      option.description,
+      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+    ),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (onPlay != null)
+          IconButton(
+            onPressed: onPlay,
+            icon: const Icon(Icons.play_circle_outline),
+            color: ChatColors.primaryDark,
+            tooltip: 'Play',
+          ),
+        Icon(
+          selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+          color: selected ? ChatColors.primary : Colors.grey.shade400,
+        ),
+      ],
     ),
   );
 

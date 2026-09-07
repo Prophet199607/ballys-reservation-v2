@@ -173,6 +173,7 @@ flutter:
     - assets/icon/menu_screen/Home icon Animation.json
     - assets/icon/menu_screen/followMembers.json
     - assets/icon/menu_screen/Followed.json
+    - assets/sounds/messageReceiveNotification.mp3
  
 
   fonts:

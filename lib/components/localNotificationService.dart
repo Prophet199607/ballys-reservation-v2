@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:ballys_reservation_app/components/badge_service.dart';
@@ -5,6 +6,7 @@ import 'package:ballys_reservation_app/data/services/notification_store.dart';
 import 'package:ballys_reservation_app/main.dart' show navigatorKey;
 import 'package:ballys_reservation_app/models/Guest/guest_booking.dart';
 import 'package:ballys_reservation_app/navigation/app_navigation.dart';
+import 'package:ballys_reservation_app/utils/chat_notification_sound.dart';
 import 'package:ballys_reservation_app/utils/current_chat_state.dart';
 import 'package:ballys_reservation_app/utils/storage_util.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -27,6 +29,10 @@ class NotificationService {
     }
 
     try {
+      // The saved tone decides which chat channel a message notification is
+      // posted to, so it has to be in hand before the first push arrives.
+      await ChatNotificationSoundStore.load();
+
       // Initialize the notification channels (does NOT request permission)
       await AwesomeNotifications().initialize(null, [
         NotificationChannel(
@@ -39,6 +45,34 @@ class NotificationService {
           importance: NotificationImportance.High,
           channelShowBadge: true,
           playSound: true,
+          enableVibration: true,
+        ),
+        // Chat messages get a channel per tone: Android freezes a channel's
+        // sound when it first sees it, so the choice is made by posting to one
+        // channel or the other rather than by editing a single channel.
+        NotificationChannel(
+          channelKey: ChatNotificationSoundStore.toneChannelKey,
+          channelName: 'Chat Messages (app tone)',
+          channelDescription: 'Chat messages with the app\'s own tone',
+          defaultColor: Color(0xFFDAB066),
+          ledColor: Colors.white,
+          importance: NotificationImportance.High,
+          channelShowBadge: true,
+          playSound: true,
+          soundSource: ChatNotificationSoundStore.androidSoundResource,
+          enableVibration: true,
+        ),
+        NotificationChannel(
+          channelKey: ChatNotificationSoundStore.defaultChannelKey,
+          channelName: 'Chat Messages (phone default)',
+          channelDescription:
+              'Chat messages with this phone\'s notification sound',
+          defaultColor: Color(0xFFDAB066),
+          ledColor: Colors.white,
+          importance: NotificationImportance.High,
+          channelShowBadge: true,
+          playSound: true,
+          defaultRingtoneType: DefaultRingtoneType.Notification,
           enableVibration: true,
         ),
       ]);
@@ -95,9 +129,19 @@ class NotificationService {
 
       String? notificationChatId;
 
-      // For iOS, skip custom notifications and let FCM handle natively
+      final msgType = message.data['msg_type']?.toString();
+      // Guest booking (35) and transport (10) are not chat, so the chat tone
+      // does not belong to them.
+      final isChatMessage = msgType != '35' && msgType != '10';
+
+      // For iOS, skip custom notifications and let FCM handle natively.
+      // In the foreground iOS shows no banner (badge only, see
+      // BadgeService), so the tone is played in-app instead of by a channel.
       if (Platform.isIOS) {
         await _updateBadgeCount(1);
+        if (isChatMessage) {
+          unawaited(ChatNotificationSoundStore.playIfAppTone());
+        }
         return;
       }
 
@@ -189,9 +233,12 @@ class NotificationService {
             message.data['chat_id']?.toString();
       }
 
+      // The conversation is already open: no banner, but the tone still marks
+      // the arrival the way it does in any messenger.
       if (notificationChatId != null &&
           CurrentChatState().isCurrentChat(notificationChatId)) {
         await _updateBadgeCount(1);
+        unawaited(ChatNotificationSoundStore.playIfAppTone());
         return;
       }
 
@@ -225,7 +272,7 @@ class NotificationService {
       bool created = await AwesomeNotifications().createNotification(
         content: NotificationContent(
           id: notificationId,
-          channelKey: 'high_importance_channel',
+          channelKey: ChatNotificationSoundStore.current.channelKey,
           title: title,
           body: body,
           notificationLayout: NotificationLayout.Default,
