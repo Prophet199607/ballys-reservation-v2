@@ -150,7 +150,8 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
   final _h_noOfPax = TextEditingController(text: '1');
   final _h_noOfChildren = TextEditingController(text: '0');
   final _h_mealPlan = TextEditingController();
-  final _h_paymentBy = TextEditingController(text: 'NA');
+  // No default: "Payment By" is mandatory and starts unanswered.
+  final _h_paymentBy = TextEditingController();
   final _h_remarks = TextEditingController();
   final _h_marketingPerson = TextEditingController();
   final _h_approvedBy = TextEditingController();
@@ -272,12 +273,14 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
   String? _h_hamoueContactPerson;
 
   /// The Air tab's counterpart of [_h_paymentBy]. A plain string rather than a
-  /// controller — nothing is ever typed into it. Empty means "untouched", which
-  /// reads as the brand's default.
+  /// controller — nothing is ever typed into it. Empty means "unanswered",
+  /// which the save refuses: the field is mandatory and has no default.
   String _a_paymentBy = '';
 
-  /// "NA", or "N/A" on Bellagio.
-  String get _defaultPaymentBy => _quick.defaultPaymentBy;
+  /// Set when a save is attempted with "Payment By" still unanswered, so the
+  /// card can say so where the chips are.
+  bool _h_paymentByError = false;
+  bool _a_paymentByError = false;
 
   /// Bellagio (bty.world) hides the Hamoue contact person dropdown.
   bool get _isBellagio => _quick.isBellagio;
@@ -537,13 +540,6 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
 
   Future<void> _loadContactPersons() async {
     await _quickNotifier.loadContactPersons();
-    if (!mounted) return;
-    // Bellagio uses "N/A" as the payment default instead of "NA". The flag is
-    // the provider's; only the controller it seeds belongs to the widget.
-    if (_isBellagio &&
-        (_h_paymentBy.text.isEmpty || _h_paymentBy.text == 'NA')) {
-      setState(() => _h_paymentBy.text = 'N/A');
-    }
   }
 
   /// Answers the hotel-type question. Everything picked under the old answer
@@ -647,7 +643,8 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
     _h_noOfPax.text = '1';
     _h_noOfChildren.text = '0';
     _h_mealPlan.clear();
-    _h_paymentBy.text = _defaultPaymentBy;
+    _h_paymentBy.clear();
+    _h_paymentByError = false;
     _h_hamoueContactPerson = null;
     _h_remarks.clear();
     _h_marketingPerson.clear();
@@ -1551,6 +1548,28 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
     return false;
   }
 
+  /// "Payment By" is mandatory on both tabs and starts unanswered, so a save
+  /// stops on it and the booking step is brought back up with the card marked.
+  bool _requireHotelPaymentBy() {
+    if (_h_paymentBy.text.trim().isNotEmpty) return true;
+    setState(() {
+      _h_paymentByError = true;
+      _hotelStep = 1;
+    });
+    _showSaveErrorSnack('Please select Payment By');
+    return false;
+  }
+
+  bool _requireAirPaymentBy() {
+    if (_a_paymentBy.trim().isNotEmpty) return true;
+    setState(() {
+      _a_paymentByError = true;
+      _airStep = 1;
+    });
+    _showSaveErrorSnack('Please select Payment By');
+    return false;
+  }
+
   /// Member search for an extra-member row. Unlike the main fields these do not
   /// go through the shared guest controllers, so the pick comes back by row.
   Future<void> _openExtraMemberSearch(
@@ -1965,7 +1984,7 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
   Room Category        : ${h.roomCategory}${h.hotelCategory.isEmpty ? '' : ' ${h.hotelCategory}'}
   Meal Plan            : ${h.mealPlan.isEmpty ? 'NA' : h.mealPlan}
   ECI/LCO Facility     : ${h.eciLco}
-  Payment By           : ${h.paymentBy}
+  Payment By           : ${_h_paymentBy.text}
   Remarks              : ${h.remarks}''';
   }
 
@@ -2105,7 +2124,7 @@ Meal                     : ${m['meal']}${(m['meal'] as String?) == 'Yes' && (m['
 Extra Legroom Seat  : ${m['extraLegroomSeat']}
 Gold Route            : ${m['goldRoute']}${(m['goldRoute'] as String?) == 'Yes' ? ' (${m['goldRouteType'] ?? ''})' : ''}
 Hamoue Contact   : ${(m['hamoueContactPerson'] as String? ?? '').isEmpty ? 'NA' : m['hamoueContactPerson']}
-Payment By          : ${_a_paymentBy.isEmpty ? _defaultPaymentBy : _a_paymentBy}
+Payment By          : $_a_paymentBy
 Passport File/s      : ${(m['passportFiles'] as String? ?? '').isEmpty ? 'None' : m['passportFiles']}
 Remarks              : ${m['remarks']}''';
     final buf = StringBuffer(body);
@@ -2287,6 +2306,7 @@ Remarks              : ${m['remarks']}''';
       _a_remarksCtrl.clear();
       _a_hamoueContactPerson = null;
       _a_paymentBy = '';
+      _a_paymentByError = false;
       _a_approver = null;
       _a_assignedGuestKeys.clear();
       _a_guestAssignError = false;
@@ -2487,6 +2507,8 @@ Remarks              : ${m['remarks']}''';
       return;
     }
 
+    if (!_requireHotelPaymentBy()) return;
+
     final allMembers = <Map<String, dynamic>>[
       ..._hotelMembers,
       if (hasCurrentGuest || currentHotels.isNotEmpty)
@@ -2559,6 +2581,8 @@ Remarks              : ${m['remarks']}''';
       if (!_requireAirTicketClass()) return;
     }
 
+    if (!_requireAirPaymentBy()) return;
+
     final allMembers = <Map<String, dynamic>>[
       ..._airMembers,
       if (hasCurrentGuest) _captureCurrentAirMember(),
@@ -2586,8 +2610,7 @@ Remarks              : ${m['remarks']}''';
       hasFamilyMembers: _sharedHasFamilyMembers,
       approver: _a_approver,
       contactPerson: _a_hamoueContactPerson ?? '',
-      paymentBy:
-          _a_paymentBy.isEmpty ? _defaultPaymentBy : _a_paymentBy,
+      paymentBy: _a_paymentBy,
       log: _logLong,
     );
     _handleSaveResult(
@@ -5049,29 +5072,30 @@ class _HotelForm extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _LabeledCard(
-            label: 'Payment By',
+            label: 'Payment By *',
             accent: accent,
+            errorText: state._h_paymentByError
+                ? 'Please select Payment By'
+                : null,
             child: _ChipSelector(
               key: ValueKey('payment_by_${state._isBellagio}'),
               options: state._isBellagio
                   ? const [
-                      'N/A',
                       'By Guest',
                       'By Beyond Borders',
                       'By Guest & Beyond Borders',
                     ]
                   : const [
-                      'NA',
                       'By Guest',
                       'By Hamoos',
                       'By Guest & Hamoos',
                     ],
-              selected: state._h_paymentBy.text.isEmpty
-                  ? (state._isBellagio ? 'N/A' : 'NA')
-                  : state._h_paymentBy.text,
+              selected: state._h_paymentBy.text,
               accent: accent,
-              onChanged: (v) =>
-                  state.setState(() => state._h_paymentBy.text = v),
+              onChanged: (v) => state.setState(() {
+                state._h_paymentBy.text = v;
+                state._h_paymentByError = false;
+              }),
             ),
           ),
           const SizedBox(height: 12),
@@ -5947,28 +5971,30 @@ class _AirForm extends StatelessWidget {
 
           // ── Payment By ───────────────────────────────────────────────────────
           _LabeledCard(
-            label: 'Payment By',
+            label: 'Payment By *',
             accent: accent,
+            errorText: state._a_paymentByError
+                ? 'Please select Payment By'
+                : null,
             child: _ChipSelector(
               key: ValueKey('air_payment_by_${state._isBellagio}'),
               options: state._isBellagio
                   ? const [
-                      'N/A',
                       'By Guest',
                       'By Beyond Borders',
                       'By Guest & Beyond Borders',
                     ]
                   : const [
-                      'NA',
                       'By Guest',
                       'By Hamoos',
                       'By Guest & Hamoos',
                     ],
-              selected: state._a_paymentBy.isEmpty
-                  ? state._defaultPaymentBy
-                  : state._a_paymentBy,
+              selected: state._a_paymentBy,
               accent: accent,
-              onChanged: (v) => state.setState(() => state._a_paymentBy = v),
+              onChanged: (v) => state.setState(() {
+                state._a_paymentBy = v;
+                state._a_paymentByError = false;
+              }),
             ),
           ),
           const SizedBox(height: 16),
@@ -7014,10 +7040,15 @@ class _LabeledCard extends StatelessWidget {
   final String label;
   final Color accent;
   final Widget child;
+
+  /// Complaint shown under the field, in the same place a form field would put
+  /// it — set only while the card holds an unanswered mandatory value.
+  final String? errorText;
   const _LabeledCard({
     required this.label,
     required this.accent,
     required this.child,
+    this.errorText,
   });
   @override
   Widget build(BuildContext context) {
@@ -7025,7 +7056,11 @@ class _LabeledCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
+        border: Border.all(
+          color: errorText == null
+              ? Colors.grey.shade300
+              : Colors.red.shade400,
+        ),
       ),
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       child: Column(
@@ -7041,6 +7076,17 @@ class _LabeledCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           child,
+          if (errorText != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              errorText!,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: Colors.red.shade700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ],
       ),
     );

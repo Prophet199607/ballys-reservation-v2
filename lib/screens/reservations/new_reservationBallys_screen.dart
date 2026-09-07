@@ -117,7 +117,11 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
   // repeated on every room and every ticket. They describe the reservation
   // rather than a single booking, so they are picked once on this screen and
   // sent once at the top of the request body.
-  String _paymentBy = 'NA';
+  /// Null until the user picks one — "Payment By" is mandatory and has no
+  /// default, so the dropdown comes up empty and the save is blocked while it
+  /// stays that way.
+  String? _paymentBy;
+  String? _paymentByError;
   String? _selectedContactPerson;
   List<String> _contactPersons = [];
 
@@ -175,9 +179,12 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
     if (!mounted) return;
     setState(() {
       _isBellagio = apiUrl.contains('bty.world');
-      // Bellagio uses "N/A" as the payment default instead of "NA".
-      if (_isBellagio && (_paymentBy.isEmpty || _paymentBy == 'NA')) {
-        _paymentBy = 'N/A';
+      // The two brands offer different values, so anything picked before the
+      // brand landed is dropped rather than fed to a dropdown that no longer
+      // offers it.
+      final offered = _paymentByItems().map((i) => i.value).toSet();
+      if (_paymentBy != null && !offered.contains(_paymentBy)) {
+        _paymentBy = null;
       }
     });
   }
@@ -188,7 +195,6 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
   List<DropdownMenuItem<String>> _paymentByItems() {
     return _isBellagio
         ? const [
-            DropdownMenuItem(value: 'N/A', child: Text('N/A')),
             DropdownMenuItem(value: 'By Guest', child: Text('By Guest')),
             DropdownMenuItem(
                 value: 'By Beyond Borders', child: Text('By Beyond Borders')),
@@ -197,7 +203,6 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                 child: Text('By Guest & Beyond Borders')),
           ]
         : const [
-            DropdownMenuItem(value: 'NA', child: Text('NA')),
             DropdownMenuItem(value: 'By Guest', child: Text('By Guest')),
             DropdownMenuItem(value: 'By Hamoos ', child: Text('By Hamoos')),
             DropdownMenuItem(
@@ -1528,6 +1533,19 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
     );
   }
 
+  /// "Payment By" has to be answered before a reservation can be saved.
+  bool _requirePaymentBy() {
+    if ((_paymentBy ?? '').trim().isNotEmpty) return true;
+    setState(() => _paymentByError = 'Please select Payment By');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Please select Payment By'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return false;
+  }
+
   void _confirmReservation() async {
     // The form-level validator on Member ID/Name only applies to whatever guest
     // is currently on screen. If guests have already been added and the current
@@ -1541,6 +1559,10 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
       if (!_formKey.currentState!.validate()) return;
       if (!_validateUpdateFields()) return;
     }
+
+    // Mandatory and with no default, so it is checked here rather than left to
+    // the form validator — that one only runs for a guest still on screen.
+    if (!_requirePaymentBy()) return;
 
     final selectedHotels = ref.read(selectedHotelBallysProvider);
     final selectedFlights = ref.read(selectedFlightBallysProvider);
@@ -1625,7 +1647,7 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
       packageAmount: _packageAmountController.text,
       // Picked once on the form, so they leave the room / ticket rows and
       // travel at the top of the body.
-      paymentBy: _paymentBy,
+      paymentBy: _paymentBy ?? '',
       contactPerson: _selectedContactPerson ?? '',
       isSharedAmount: _sharedPackage,
       authorizationId: _selectedAuthorization?.idNo,
@@ -1677,7 +1699,8 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
         _reservationNoController.clear();
         _hasFamilyMembers = false;
         _sharedPackage = false;
-        _paymentBy = _isBellagio ? 'N/A' : 'NA';
+        _paymentBy = null;
+        _paymentByError = null;
         _selectedContactPerson = null;
         _selectedAuthorization = null;
         _clearExtraMembers();
@@ -3308,12 +3331,20 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                             fontWeight: fontSettings.fontWeight,
                             color: Colors.black,
                           ),
+                          hint: Text(
+                            "Select Payment By",
+                            style: TextStyle(
+                              fontSize: fontSettings.fontSize,
+                              fontWeight: fontSettings.fontWeight,
+                            ),
+                          ),
                           decoration: InputDecoration(
-                            labelText: "Payment By",
+                            labelText: "Payment By *",
                             labelStyle: TextStyle(
                               fontSize: fontSettings.fontSize,
                               fontWeight: fontSettings.fontWeight,
                             ),
+                            errorText: _paymentByError,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8.0),
                             ),
@@ -3323,10 +3354,10 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                             ),
                           ),
                           items: _paymentByItems(),
-                          onChanged: (value) => setState(
-                            () => _paymentBy =
-                                value ?? (_isBellagio ? 'N/A' : 'NA'),
-                          ),
+                          onChanged: (value) => setState(() {
+                            _paymentBy = value;
+                            _paymentByError = null;
+                          }),
                         ),
                         const SizedBox(height: 10.0),
 

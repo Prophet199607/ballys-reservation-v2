@@ -86,9 +86,6 @@ class QuickReservationBallysState {
       selectedPrefix: selectedPrefix ?? this.selectedPrefix,
     );
   }
-
-  /// The default payment-by value for this location.
-  String get defaultPaymentBy => isBellagio ? 'N/A' : 'NA';
 }
 
 class QuickReservationBallysNotifier
