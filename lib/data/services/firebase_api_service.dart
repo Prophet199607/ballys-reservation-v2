@@ -35,7 +35,8 @@ class FirebaseApiService {
      'users': '/api/users', // base; full path: /api/users/{userUuid}/avatar
     'markAsRead': '/api/chats',
     'fetchMessages': '/api/chats',
-    'softDeleteMessage': '/api/chats',
+    'deleteMessageForEveryone': '/api/chats', // base; full path: /api/chats/{chatId}/messages/{messageId}/soft-delete
+    'deleteMessageForMe': '/api/chats', // base; full path: /api/chats/{chatId}/messages/{messageId}/delete-for-me
     'forwardMessage': '/api/chats', // base; full path: /api/chats/{chatId}/messages/{messageId}/forward
     'reactToMessage': '/api/chats', // base; full path: /api/chats/{chatId}/messages/{messageId}/react
     'uploadFiles': '/api/chats', // base; full path: /api/chats/{chatId}/upload/multiple
@@ -987,10 +988,16 @@ print('updateUserAvatar response: ${streamedResponse.statusCode} $responseBody')
     }
   }
 
+  /// The chat's messages, minus the ones this user deleted for themselves —
+  /// the backend only applies that filtering when it is told who is asking,
+  /// hence the `userId`/`appType` query params.
   static Future<Map<String, dynamic>> fetchMessages(String chatId) async {
     try {
       final domain = await resolveDomain();
-      final url = '$domain${endpoints['fetchMessages']}/$chatId/messages';
+      final deviceId = await DeviceId.get();
+      final url = '$domain${endpoints['fetchMessages']}/$chatId/messages'
+          '?userId=${Uri.encodeQueryComponent(deviceId)}'
+          '&appType=$appType';
       print("rrrr, $url");
       final response =
           await getRequest(url).timeout(const Duration(seconds: 10));
@@ -1032,32 +1039,92 @@ print('updateUserAvatar response: ${streamedResponse.statusCode} $responseBody')
     }
   }
 
-  // static Future<Map<String, dynamic>> softDeleteMessage(
-  //   String chatId,
-  //   String messageId,
-  // ) async {
-  //   try {
-  //     final deviceId = await DeviceId.get();
-  //     final url =
-  //         '$domain${endpoints['softDeleteMessage']}/$chatId/messages/$messageId';
-  //     return await deleteRequestWithBody(url, {'userId': deviceId});
-  //   } catch (e) {
-  //     return {'success': false, 'error': e.toString()};
-  //   }
-  // }
-  // Delete for ME only (existing - soft delete)
-static Future<Map<String, dynamic>> softDeleteMessage(
-
+/// Deletes a message for everyone — WhatsApp's "delete for everyone".
+///
+/// Sender only (the backend answers 403 for anyone else), and it is a soft
+/// delete: the message stays in the conversation and keeps coming back from
+/// [fetchMessages], but with its real text replaced by a placeholder, its
+/// attachment withheld and `isDeleted: true` set, so the thread shows a
+/// tombstone instead of a gap. Reactions, mentions and seen-by are left as
+/// they were, and the chat list skips past it when picking a preview.
+///
+/// Recoverable with [restoreMessage] — the real content is still on the
+/// server.
+static Future<Map<String, dynamic>> deleteMessageForEveryone(
   String chatId,
   String messageId,
 ) async {
   try {
-    print('softDeleteMessage called with chatId: $chatId, messageId: $messageId');
     final domain = await resolveDomain();
     final deviceId = await DeviceId.get();
     final url = '$domain/api/chats/$chatId/messages/$messageId/soft-delete';
-    return await patchRequest(url, {'userId': deviceId,'appType': 2});
+    final body = {'userId': deviceId, 'appType': appType};
+
+    _logLong('deleteMessageForEveryone ▶ PATCH $url');
+    _logLong('deleteMessageForEveryone ▶ body: ${jsonEncode(body)}');
+
+    final result = await patchRequest(url, body);
+
+    _logLong('deleteMessageForEveryone ◀ response: ${jsonEncode(result)}');
+    return result;
   } catch (e) {
+    print('deleteMessageForEveryone ✖ exception: $e');
+    return {'success': false, 'error': e.toString()};
+  }
+}
+
+/// Hides a message from this user's own view — WhatsApp's "delete for me".
+///
+/// Unlike [deleteMessageForEveryone] this is open to any participant on any
+/// message, including one somebody else sent and one already deleted for
+/// everyone: nothing changes for the other participants, the message simply
+/// stops being returned by [fetchMessages] for this caller (which is why that
+/// call passes `userId`/`appType`). Idempotent, and there is no undo — the
+/// same rules WhatsApp applies.
+static Future<Map<String, dynamic>> deleteMessageForMe(
+  String chatId,
+  String messageId,
+) async {
+  try {
+    final domain = await resolveDomain();
+    final deviceId = await DeviceId.get();
+    final url = '$domain/api/chats/$chatId/messages/$messageId/delete-for-me';
+    final body = {'userId': deviceId, 'appType': appType};
+
+    _logLong('deleteMessageForMe ▶ POST $url');
+    _logLong('deleteMessageForMe ▶ body: ${jsonEncode(body)}');
+
+    final result = await postRequest(url, body);
+
+    _logLong('deleteMessageForMe ◀ response: ${jsonEncode(result)}');
+    return result;
+  } catch (e) {
+    print('deleteMessageForMe ✖ exception: $e');
+    return {'success': false, 'error': e.toString()};
+  }
+}
+
+/// Undoes a [deleteMessageForEveryone], putting the real text and attachment
+/// back. Allowed for the sender or whoever deleted it.
+static Future<Map<String, dynamic>> restoreMessage(
+  String chatId,
+  String messageId,
+) async {
+  try {
+    final domain = await resolveDomain();
+    final deviceId = await DeviceId.get();
+    final url = '$domain/api/chats/$chatId/messages/$messageId/restore';
+    final body = {'userId': deviceId, 'appType': appType};
+
+    _logLong('restoreMessage ▶ PATCH $url');
+    _logLong('restoreMessage ▶ body: ${jsonEncode(body)}');
+
+    final result = await patchRequest(url, body);
+
+    _logLong('restoreMessage ◀ response: ${jsonEncode(result)}');
+    return result;
+  } catch (e) {
+    print('restoreMessage ✖ exception: $e');
     return {'success': false, 'error': e.toString()};
   }
 }
@@ -1145,21 +1212,6 @@ static void _logLong(String message, {int chunkSize = 800}) {
   }
 }
 
-// Delete for EVERYONE (hard delete)
-static Future<Map<String, dynamic>> deleteMessageForEveryone(
-  String chatId,
-  String messageId,
-) async {
-  try {
-    print('deleteMessageForEveryone called with chatId: $chatId, messageId: $messageId');
-    final domain = await resolveDomain();
-    final deviceId = await DeviceId.get();
-    final url = '$domain/api/chats/$chatId/messages/$messageId';
-    return await deleteRequestWithBody(url, {'userId': deviceId,'appType': 2});
-  } catch (e) {
-    return {'success': false, 'error': e.toString()};
-  }
-}
 /// Adds, changes or removes this user's emoji reaction on a message.
 ///
 /// The backend keeps at most one reaction per user per message, so this one

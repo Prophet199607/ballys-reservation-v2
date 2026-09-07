@@ -2100,9 +2100,10 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   }
 
   /// Only messages the server already knows about can be quoted — the backend
-  /// rejects a replyToMessageId it cannot find in this chat.
+  /// rejects a replyToMessageId it cannot find in this chat. A message deleted
+  /// for everyone has no content left to quote.
   bool _canReplyTo(ChatMessage msg) =>
-      !msg.isSystem && msg.apiMessageId != null;
+      !msg.isSystem && !msg.isDeleted && msg.apiMessageId != null;
 
   // ─── Reactions ──────────────────────────────────────────────────────────────
 
@@ -2120,8 +2121,10 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   /// A message can be reacted to once the server knows about it — an
   /// optimistic bubble still waiting for its messageId has nothing to react
   /// to yet.
+  /// Reacting to a message deleted for everyone is rejected with 400, so the
+  /// emoji row stays shut on a tombstone.
   bool _canReactTo(ChatMessage msg) =>
-      msg.apiMessageId != null && msg.apiChatId != null;
+      msg.apiMessageId != null && msg.apiChatId != null && !msg.isDeleted;
 
   /// The message whose emoji row is open, or null when no row is showing.
   ///
@@ -3018,6 +3021,8 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   /// they contribute nothing and are skipped.
   String? _copyableText(ChatMessage msg) {
     if (msg.hasGroupedAttachments || msg.fileType != null) return null;
+    // The placeholder left behind by a delete-for-everyone is not content.
+    if (msg.isDeleted) return null;
     final text = msg.text.trim();
     if (text.isEmpty || text.startsWith('📎')) return null;
     return text;
@@ -3272,6 +3277,8 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   /// several server messages collapsed into one, so each attachment has to be
   /// forwarded on its own.
   List<String> _forwardableIds(ChatMessage msg) {
+    // Nothing left to forward once it has been deleted for everyone.
+    if (msg.isDeleted) return const [];
     if (msg.hasGroupedAttachments) {
       final ids = msg.groupedAttachments
           .map((a) => a.messageId)
@@ -3570,7 +3577,12 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     final selectedMsgs = _messages
         .where((m) => selectedIds.contains(m.id))
         .toList();
-    final allMine = selectedMsgs.every((m) => m.isMe);
+    // "Delete for everyone" is the sender's own call, and a message already
+    // deleted for everyone has nothing left to delete. "Delete for me" has no
+    // such rule — any participant can hide any message from their own view.
+    final canDeleteForEveryone =
+        selectedMsgs.isNotEmpty &&
+        selectedMsgs.every((m) => m.isMe && !m.isDeleted);
     final fontSettings = ref.read(chatFontSettingsProvider);
 
     showModalBottomSheet(
@@ -3601,7 +3613,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
             const Divider(height: 1),
 
             // ── Delete for Everyone (only if ALL selected are mine) ──
-            if (allMine)
+            if (canDeleteForEveryone)
               ListTile(
                 leading: const Icon(Icons.delete_forever, color: Colors.red),
                 title: Text(
@@ -3613,7 +3625,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                   ),
                 ),
                 subtitle: Text(
-                  'Remove for all participants',
+                  'Everyone sees "This message was deleted"',
                   style: TextStyle(fontSize: fontSettings.fontSize - 4),
                 ),
                 onTap: () async {
@@ -3694,19 +3706,30 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     );
 
     bool hasError = false;
+    // Only what the server actually accepted is applied to the list, so a
+    // rejected call leaves its message where it was instead of vanishing.
+    final deletedIds = <String>{};
 
     for (final msg in selectedMsgs) {
-      if (msg.apiChatId != null && msg.apiMessageId != null) {
-        final response = forEveryone
-            ? await FirebaseApiService.deleteMessageForEveryone(
-                msg.apiChatId!,
-                msg.apiMessageId!,
-              )
-            : await FirebaseApiService.softDeleteMessage(
-                msg.apiChatId!,
-                msg.apiMessageId!,
-              );
-        if (response['success'] != true) hasError = true;
+      if (msg.apiChatId == null || msg.apiMessageId == null) {
+        // Still on its way to the server: nothing to address, and a
+        // delete-for-me can simply drop the local bubble.
+        if (!forEveryone) deletedIds.add(msg.id);
+        continue;
+      }
+      final response = forEveryone
+          ? await FirebaseApiService.deleteMessageForEveryone(
+              msg.apiChatId!,
+              msg.apiMessageId!,
+            )
+          : await FirebaseApiService.deleteMessageForMe(
+              msg.apiChatId!,
+              msg.apiMessageId!,
+            );
+      if (response['success'] == true) {
+        deletedIds.add(msg.id);
+      } else {
+        hasError = true;
       }
     }
 
@@ -3715,12 +3738,25 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     setState(() {
-      _messages.removeWhere((m) => selectedIds.contains(m.id));
+      if (forEveryone) {
+        // Soft delete: the message stays in the conversation as a tombstone,
+        // which is what the next fetch will return, so rewrite it in place
+        // rather than removing the row.
+        for (int i = 0; i < _messages.length; i++) {
+          if (deletedIds.contains(_messages[i].id)) {
+            _messages[i] = _messages[i].asDeleted(deletedBy: _currentUserUuid);
+          }
+        }
+      } else {
+        // Delete for me: gone from this user's view only, and the backend
+        // stops returning it for us at all.
+        _messages.removeWhere((m) => deletedIds.contains(m.id));
+      }
       _selectedMessageIds.clear();
       _reactionTargetId = null;
       // Quoting a message that has just been deleted would be rejected on
       // send, so drop the pending reply with it.
-      if (_replyingTo != null && selectedIds.contains(_replyingTo!.id)) {
+      if (_replyingTo != null && deletedIds.contains(_replyingTo!.id)) {
         _replyingTo = null;
       }
     });
@@ -3731,8 +3767,8 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
           hasError
               ? 'Some messages could not be deleted.'
               : forEveryone
-              ? '${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''} deleted for everyone'
-              : '${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''} deleted',
+              ? '${deletedIds.length} message${deletedIds.length > 1 ? 's' : ''} deleted for everyone'
+              : '${deletedIds.length} message${deletedIds.length > 1 ? 's' : ''} deleted for you',
         ),
         backgroundColor: hasError ? Colors.red : ChatColors.primaryDark,
         duration: const Duration(seconds: 2),
@@ -4453,8 +4489,13 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     final isSelected = _selectedMessageIds.contains(message.id);
     final isHighlighted =
         _highlightedMessageId == message.id || _currentSearchHit == message.id;
-    final hasGrouped = message.hasGroupedAttachments;
+    // Deleted for everyone: the backend keeps returning the row but withholds
+    // its text and attachment, so the bubble shows the tombstone line in
+    // their place and none of the message's own trimmings.
+    final isDeleted = message.isDeleted;
+    final hasGrouped = message.hasGroupedAttachments && !isDeleted;
     final showText =
+        !isDeleted &&
         message.text.isNotEmpty &&
         message.fileType != 'image' &&
         message.fileType != 'document' &&
@@ -4464,7 +4505,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
         !hasGrouped;
     final isImageBubble = hasGrouped
         ? message.isImageGroup
-        : message.fileType == 'image';
+        : !isDeleted && message.fileType == 'image';
     final senderLabel = (message.senderName?.trim().isNotEmpty ?? false)
         ? message.senderName!.trim()
         : 'Unknown';
@@ -4642,7 +4683,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                             ),
 
                           // Quoted message (reply)
-                          if (message.replyToMessageId != null)
+                          if (message.replyToMessageId != null && !isDeleted)
                             Padding(
                               padding: EdgeInsets.only(
                                 left: isImageBubble ? 8 : 0,
@@ -4654,7 +4695,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
 
                           // Forwarded tag — the backend marks messages created
                           // by the forward endpoint, naming the original sender.
-                          if (message.isForwarded)
+                          if (message.isForwarded && !isDeleted)
                             Padding(
                               padding: EdgeInsets.only(
                                 bottom: 4,
@@ -4730,12 +4771,44 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                               message.id,
                               fontSettings,
                             ),
-                          ] else if (message.fileType != null) ...[
+                          ] else if (message.fileType != null &&
+                              !isDeleted) ...[
                             _buildSingleAttachment(message, fontSettings),
                           ],
 
-                          if (hasGrouped || message.fileType != null)
+                          if (hasGrouped ||
+                              (message.fileType != null && !isDeleted))
                             const SizedBox(height: 4),
+
+                          // Tombstone, standing in for whatever was here
+                          // before the sender deleted it for everyone.
+                          if (isDeleted)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.block,
+                                    size: fontSettings.fontSize,
+                                    color: ChatColors.bubbleMeta,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      message.isMe
+                                          ? 'You deleted this message'
+                                          : 'This message was deleted',
+                                      style: TextStyle(
+                                        color: ChatColors.bubbleMeta,
+                                        fontSize: fontSettings.fontSize,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
 
                           // Text
                           if (showText)
@@ -4775,7 +4848,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                                 // Corrected after sending: say so, the way
                                 // every other chat app does, so a changed
                                 // message is never silently different.
-                                if (message.isEdited) ...[
+                                if (message.isEdited && !isDeleted) ...[
                                   const SizedBox(width: 4),
                                   Text(
                                     'edited',
