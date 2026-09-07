@@ -69,32 +69,64 @@ class MentionTracker {
     return !_sameIds(previous, ids);
   }
 
+  /// Page size used while scanning, and how many pages back the scan is
+  /// willing to walk.
+  ///
+  /// The messages endpoint is paginated, so the whole history no longer
+  /// arrives in one response. Unread messages sit at the end of a
+  /// conversation, so the scan walks back from the newest page only as long
+  /// as it keeps finding unread ones — the cap is there for the pathological
+  /// case of a conversation nobody has opened in a very long time.
+  static const int _scanPageSize = 100;
+  static const int _scanPageLimit = 5;
+
   /// The unread messages of [chatId] that name [userUuid], oldest first.
   /// Failures answer "no mentions" — a missed marker is better than a broken
   /// chat list.
   static Future<List<String>> _scan(String chatId, String userUuid) async {
     try {
-      final response = await FirebaseApiService.fetchMessages(chatId);
-      if (response['success'] != true) return const [];
-
-      final data = response['data'];
-      if (data is! Map) return const [];
-      final raw = data['messages'];
-      if (raw is! List) return const [];
-
       final hits = <ChatMessage>[];
-      for (final row in raw.whereType<Map<String, dynamic>>()) {
-        final ChatMessage message;
-        try {
-          message = ChatMessage.fromApiResponse(row, userUuid);
-        } catch (_) {
-          continue; // A single malformed row must not lose the rest.
+      int? before;
+
+      for (var page = 0; page < _scanPageLimit; page++) {
+        final response = await FirebaseApiService.fetchMessages(
+          chatId,
+          limit: _scanPageSize,
+          before: before,
+        );
+        if (response['success'] != true) break;
+
+        final data = response['data'];
+        if (data is! Map) break;
+        final raw = data['messages'];
+        if (raw is! List) break;
+
+        var sawUnread = false;
+        for (final row in raw.whereType<Map<String, dynamic>>()) {
+          final ChatMessage message;
+          try {
+            message = ChatMessage.fromApiResponse(row, userUuid);
+          } catch (_) {
+            continue; // A single malformed row must not lose the rest.
+          }
+          if (message.isMe || message.isRead == true) continue;
+          sawUnread = true;
+          if (!message.mentionsUser(userUuid, FirebaseApiService.appType)) {
+            continue;
+          }
+          hits.add(message);
         }
-        if (message.isMe || message.isRead == true) continue;
-        if (!message.mentionsUser(userUuid, FirebaseApiService.appType)) {
-          continue;
-        }
-        hits.add(message);
+
+        // Nothing unread left in this page means everything before it has
+        // been read too, so there is no older mention to find.
+        if (!sawUnread) break;
+
+        if (data['hasMore'] != true) break;
+        final cursor = data['nextCursor'];
+        before = cursor is num
+            ? cursor.toInt()
+            : int.tryParse(cursor?.toString() ?? '');
+        if (before == null) break;
       }
 
       hits.sort((a, b) => a.timestamp.compareTo(b.timestamp));

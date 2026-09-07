@@ -209,7 +209,30 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   final ImagePicker _imagePicker = ImagePicker();
   final FocusNode _messageFocusNode = FocusNode();
 
+  /// The list the screen renders: image messages grouped, and any optimistic
+  /// bubble the server has not echoed back yet merged in. Derived from
+  /// [_serverMessages] by [_composeDisplayMessages].
   List<ChatMessage> _messages = [];
+
+  // ── Paging over the message history ──
+  /// Everything fetched from the server so far, ungrouped and oldest first.
+  /// The conversation opens on the newest page only and walks backwards from
+  /// there, so this grows as the reader scrolls up. Kept flat because image
+  /// grouping has to run across a page boundary, not per page.
+  List<ChatMessage> _serverMessages = [];
+
+  /// `nextCursor` for the page before the oldest message loaded, and whether
+  /// the server says anything is left behind it. The cursor is opaque — it is
+  /// handed back to the backend unchanged.
+  int? _olderCursor;
+  bool _hasMoreOlder = false;
+  bool _isLoadingOlder = false;
+
+  /// Whether the first page has landed. Until it has, the newest page also
+  /// seeds [_olderCursor]; afterwards it must not, since its cursor points at
+  /// history that may already be loaded.
+  bool _pagingInitialised = false;
+
   String? _currentUserName;
   String? _currentUserUuid;
 
@@ -339,6 +362,10 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   /// Ids of the matching messages, newest first, and which of them is being
   /// shown. Recomputed every build rather than cached, so a message arriving
   /// or being deleted with the bar open cannot leave a stale hit behind.
+  ///
+  /// Only the history loaded so far is searched — the conversation is paged
+  /// in from the newest end, so older matches appear as the reader scrolls
+  /// further back.
   List<String> _searchHits = const [];
   int _searchIndex = 0;
 
@@ -353,6 +380,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     if (widget.isGroup) _loadGroupInfo();
     _getCurrentUserName();
     _fetchMessagesFromApi();
+    _scrollController.addListener(_onScroll);
     _setupForegroundMessageListener();
     _startReadStatusPolling();
     _messageFocusNode.addListener(_onFocusChange);
@@ -367,6 +395,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     WidgetsBinding.instance.removeObserver(this);
     CurrentChatState().clearCurrentChat();
     _messageController.dispose();
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _messageFocusNode.dispose();
     _searchController.dispose();
@@ -525,6 +554,16 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
 
   // ─── Fetch messages ─────────────────────────────────────────────────────────
 
+  /// How many messages a page of history holds. The endpoint caps this at 100.
+  static const int _messagePageSize = 50;
+
+  /// Fetches the newest page of the conversation and folds it in.
+  ///
+  /// This is what every refresh runs — opening the screen, the read-status
+  /// poll, a push arriving, coming back from the background — so it only ever
+  /// asks for the most recent messages. Older pages the reader has already
+  /// walked back to are kept; [_loadOlderMessages] is what fetches more of
+  /// them.
   Future<void> _fetchMessagesFromApi({
     bool silent = false,
     bool updateReadStatusOnly = false,
@@ -537,6 +576,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     try {
       final response = await FirebaseApiService.fetchMessages(
         widget.contact.chatUuid,
+        limit: _messagePageSize,
       );
       final deviceId = await DeviceId.get();
 
@@ -545,13 +585,15 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
         if (rd['success'] == true && rd['messages'] != null) {
           final List<dynamic> raw = rd['messages'];
 
-          final flat = raw
-              .map((j) => ChatMessage.fromApiResponse(j, deviceId ?? ''))
+          final page = raw
+              .map((j) => ChatMessage.fromApiResponse(j, deviceId))
               .toList();
-          final grouped = ChatMessage.groupImageMessages(flat);
 
           if (updateReadStatusOnly) {
             // ── Only update read-status fields, don't disturb the list ──
+            // Anything older than this page is left alone: read receipts only
+            // move on messages recent enough to still be in it.
+            final grouped = ChatMessage.groupImageMessages(page);
             bool changed = false;
             for (int i = 0; i < _messages.length; i++) {
               final updated = grouped.firstWhere(
@@ -563,38 +605,37 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                 _messages[i] = updated;
               }
             }
+            // Keep the flat source in step, so the next page merge cannot
+            // fold a stale read flag back into the list.
+            for (int i = 0; i < _serverMessages.length; i++) {
+              final id = _serverMessages[i].apiMessageId;
+              if (id == null) continue;
+              final updated = page.firstWhere(
+                (m) => m.apiMessageId == id,
+                orElse: () => _serverMessages[i],
+              );
+              if (_serverMessages[i].isRead != updated.isRead) {
+                _serverMessages[i] = updated;
+              }
+            }
             if (changed && mounted) setState(() {});
           } else {
             final hadMessages = _messages.isNotEmpty;
-            final countChanged = _messages.length != grouped.length;
+            final previousCount = _messages.length;
 
-            // ── FIX: Preserve optimistic/local messages not yet confirmed by server ──
-            // Local messages that were added optimistically (e.g. during upload)
-            // have apiMessageId == null. Keep them until the server confirms them.
-            final pendingLocal = _messages.where((m) {
-              return m.apiMessageId == null &&
-                  !grouped.any((g) => g.id == m.id);
-            }).toList();
+            _serverMessages = _mergeNewestPage(page);
 
-            // The chat endpoint does not always hand back the new messageId,
-            // so an optimistic bubble can stay id-less — for group sends and
-            // for 1:1 replies alike. Drop it once the server echoes the same
-            // text back, otherwise it shows up twice.
-            pendingLocal.removeWhere(
-              (m) =>
-                  m.isMe &&
-                  m.text.isNotEmpty &&
-                  grouped.any(
-                    (g) =>
-                        g.isMe &&
-                        g.text == m.text &&
-                        g.timestamp.difference(m.timestamp).abs() <
-                            const Duration(minutes: 2),
-                  ),
-            );
+            // The newest page also seeds the cursor, but only the first time:
+            // once history has been paged back, this page's `nextCursor`
+            // points at messages that are already loaded.
+            if (!_pagingInitialised) {
+              _pagingInitialised = true;
+              _olderCursor = _parseCursor(rd['nextCursor']);
+              _hasMoreOlder = rd['hasMore'] == true && _olderCursor != null;
+            }
 
-            final merged = [...grouped, ...pendingLocal]
-              ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+            final merged = _composeDisplayMessages();
+            final countChanged = previousCount != merged.length;
 
             setState(() {
               _messages = merged;
@@ -619,6 +660,128 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
       if (!silent && !updateReadStatusOnly) {
         setState(() => _isLoadingMessages = false);
       }
+    }
+  }
+
+  /// `nextCursor` as the server sends it — a number, or null on the last page.
+  /// Tolerates it arriving as a string, and treats anything else as absent.
+  static int? _parseCursor(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '');
+  }
+
+  /// Folds a freshly fetched newest page into what is already loaded.
+  ///
+  /// The page only speaks for the window it covers, so everything from its
+  /// oldest message onwards is replaced by it — which is how edits,
+  /// reactions, read receipts and deletions inside that window arrive — while
+  /// pages the reader walked back to earlier are left in place ahead of it.
+  List<ChatMessage> _mergeNewestPage(List<ChatMessage> page) {
+    // The newest page comes back empty only when the conversation itself is.
+    if (page.isEmpty) return const [];
+
+    final cutoff = page.first.timestamp;
+    final pageIds = page.map(_identityOf).toSet();
+    final older = _serverMessages.where((m) {
+      if (pageIds.contains(_identityOf(m))) return false;
+      // A message the page no longer lists, from its oldest message onwards,
+      // has been deleted. One sharing that exact timestamp is kept, since it
+      // may simply have fallen the other side of the page boundary.
+      return !m.timestamp.isAfter(cutoff);
+    }).toList();
+    return [...older, ...page];
+  }
+
+  /// What makes two copies of the same server message the same message.
+  static String _identityOf(ChatMessage m) => m.apiMessageId ?? m.id;
+
+  /// Rebuilds the rendered list from [_serverMessages]: image messages
+  /// grouped, and any optimistic bubble still waiting on the server kept in
+  /// place.
+  List<ChatMessage> _composeDisplayMessages() {
+    final grouped = ChatMessage.groupImageMessages(_serverMessages);
+
+    // ── Preserve optimistic/local messages not yet confirmed by server ──
+    // Local messages that were added optimistically (e.g. during upload)
+    // have apiMessageId == null. Keep them until the server confirms them.
+    final pendingLocal = _messages.where((m) {
+      return m.apiMessageId == null && !grouped.any((g) => g.id == m.id);
+    }).toList();
+
+    // The chat endpoint does not always hand back the new messageId, so an
+    // optimistic bubble can stay id-less — for group sends and for 1:1
+    // replies alike. Drop it once the server echoes the same text back,
+    // otherwise it shows up twice.
+    pendingLocal.removeWhere(
+      (m) =>
+          m.isMe &&
+          m.text.isNotEmpty &&
+          grouped.any(
+            (g) =>
+                g.isMe &&
+                g.text == m.text &&
+                g.timestamp.difference(m.timestamp).abs() <
+                    const Duration(minutes: 2),
+          ),
+    );
+
+    return [...grouped, ...pendingLocal]
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  }
+
+  /// The list is reversed, so the far end of its scroll range is the top of
+  /// the conversation: nearing it is the cue to fetch the page before it.
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 300) {
+      _loadOlderMessages();
+    }
+  }
+
+  /// Pulls the page of history before the oldest message loaded.
+  ///
+  /// Prepending to a reversed list adds rows above the viewport, so what the
+  /// reader is looking at stays where it is.
+  Future<void> _loadOlderMessages() async {
+    final cursor = _olderCursor;
+    if (_isLoadingOlder || !_hasMoreOlder || cursor == null) return;
+    setState(() => _isLoadingOlder = true);
+
+    try {
+      final response = await FirebaseApiService.fetchMessages(
+        widget.contact.chatUuid,
+        limit: _messagePageSize,
+        before: cursor,
+      );
+      final deviceId = await DeviceId.get();
+
+      if (response['success'] == true && response['data'] != null) {
+        final rd = response['data'];
+        if (rd['success'] == true && rd['messages'] != null) {
+          final List<dynamic> raw = rd['messages'];
+          final page = raw
+              .map((j) => ChatMessage.fromApiResponse(j, deviceId))
+              .toList();
+
+          final known = _serverMessages.map(_identityOf).toSet();
+          final fresh =
+              page.where((m) => !known.contains(_identityOf(m))).toList();
+
+          _serverMessages = [...fresh, ..._serverMessages]
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          _olderCursor = _parseCursor(rd['nextCursor']);
+          _hasMoreOlder = rd['hasMore'] == true && _olderCursor != null;
+
+          final merged = _composeDisplayMessages();
+          if (mounted) setState(() => _messages = merged);
+        }
+      }
+    } catch (_) {
+      // A page that fails to load is left for the next scroll to ask for.
+    } finally {
+      if (mounted) setState(() => _isLoadingOlder = false);
     }
   }
 
@@ -3819,10 +3982,35 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   /// back to its usual scroll.
   bool _consumeInitialMentionJump() {
     if (!widget.jumpToMentionOnOpen) return false;
-    if (_initialMentionJumpDone || _reachableMentions.isEmpty) return false;
+    if (_initialMentionJumpDone || _pendingMentions.isEmpty) return false;
+
+    if (_reachableMentions.isNotEmpty) {
+      _initialMentionJumpDone = true;
+      _jumpToNextMention();
+      return true;
+    }
+
+    // The mention is older than the page the screen opened on, so there is
+    // nothing to scroll to yet: fetch history back to it first.
+    if (!_hasMoreOlder) return false;
     _initialMentionJumpDone = true;
-    _jumpToNextMention();
+    () async {
+      if (await _loadUntilMentionReachable() && mounted) _jumpToNextMention();
+    }();
     return true;
+  }
+
+  /// Walks history back a page at a time until one of the pending mentions is
+  /// loaded. Bounded, so a mention that has since been deleted cannot drag
+  /// the whole conversation in behind it.
+  Future<bool> _loadUntilMentionReachable() async {
+    for (var page = 0; page < 5; page++) {
+      if (_reachableMentions.isNotEmpty) return true;
+      if (!_hasMoreOlder) break;
+      await _loadOlderMessages();
+      if (!mounted) return false;
+    }
+    return _reachableMentions.isNotEmpty;
   }
 
   /// Goes to the oldest mention not visited yet and takes it off the list, so
@@ -4190,6 +4378,26 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
           cur.timestamp.day,
         ) !=
         DateTime(prev.timestamp.year, prev.timestamp.month, prev.timestamp.day);
+  }
+
+  /// Sits above the oldest loaded message while there is more history to
+  /// fetch, and spins once that fetch is under way.
+  Widget _buildOlderMessagesLoader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: _isLoadingOlder
+              ? const CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: ChatColors.primary,
+                )
+              : null,
+        ),
+      ),
+    );
   }
 
   // ─── Image grid widget ──────────────────────────────────────────────────────
@@ -5709,8 +5917,16 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                                       vertical: 8,
                                     ),
                                     reverse: true,
-                                    itemCount: _messages.length,
+                                    itemCount:
+                                        _messages.length +
+                                        (_hasMoreOlder ? 1 : 0),
                                     itemBuilder: (ctx, index) {
+                                      // Reversed list: the last row is the top
+                                      // of the conversation, where the page
+                                      // before it is fetched.
+                                      if (index >= _messages.length) {
+                                        return _buildOlderMessagesLoader();
+                                      }
                                       final ri = _messages.length - 1 - index;
                                       final msg = _messages[ri];
                                       return Column(

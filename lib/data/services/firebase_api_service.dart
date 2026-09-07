@@ -988,16 +988,32 @@ print('updateUserAvatar response: ${streamedResponse.statusCode} $responseBody')
     }
   }
 
-  /// The chat's messages, minus the ones this user deleted for themselves —
-  /// the backend only applies that filtering when it is told who is asking,
-  /// hence the `userId`/`appType` query params.
-  static Future<Map<String, dynamic>> fetchMessages(String chatId) async {
+  /// One page of a chat's messages, minus the ones this user deleted for
+  /// themselves — the backend only applies that filtering when it is told who
+  /// is asking, hence the `userId`/`appType` query params.
+  ///
+  /// The endpoint is paginated: it answers with the [limit] most recent
+  /// messages (server default 50, capped at 100) and, in `hasMore` and
+  /// `nextCursor`, whether there is older history behind them. Pass that
+  /// cursor back as [before] to fetch the page older than the one it came
+  /// from; omit it for the most recent messages. Within a page the messages
+  /// are still ordered oldest → newest.
+  ///
+  /// [before] is an opaque server id — it is passed through unchanged and
+  /// must not be derived from a messageUuid or a timestamp.
+  static Future<Map<String, dynamic>> fetchMessages(
+    String chatId, {
+    int? limit,
+    int? before,
+  }) async {
     try {
       final domain = await resolveDomain();
       final deviceId = await DeviceId.get();
       final url = '$domain${endpoints['fetchMessages']}/$chatId/messages'
           '?userId=${Uri.encodeQueryComponent(deviceId)}'
-          '&appType=$appType';
+          '&appType=$appType'
+          '${limit == null ? '' : '&limit=$limit'}'
+          '${before == null ? '' : '&before=$before'}';
       print("rrrr, $url");
       final response =
           await getRequest(url).timeout(const Duration(seconds: 10));
