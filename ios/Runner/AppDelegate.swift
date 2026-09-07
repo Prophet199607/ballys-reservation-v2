@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import UIKit
 import FirebaseCore
@@ -94,8 +95,42 @@ import FirebaseMessaging
       }
     }
 
+    // awesome_notifications grabs the notification centre delegate for itself
+    // on UIApplication.didFinishLaunchingNotification — that is, after this
+    // method returns — and answers every notification it did not create with
+    // [.alert, .badge, .sound]. Taking the delegate back on the next run loop
+    // turn puts the presentation choice (see willPresent below) back in this
+    // file; whatever held it is kept in `delegateBehind` and still gets every
+    // callback this class does not answer itself.
+    DispatchQueue.main.async { [weak self] in
+      self?.reclaimNotificationCenterDelegate()
+    }
+
+    // A plugin can claim the delegate again later, so the claim is re-checked
+    // on every foregrounding rather than only at launch.
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.reclaimNotificationCenterDelegate()
+    }
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
+
+  /// The delegate that was in place before this class took it back, so its
+  /// notifications and action taps keep being handled.
+  private weak var delegateBehind: UNUserNotificationCenterDelegate?
+
+  private func reclaimNotificationCenterDelegate() {
+    guard #available(iOS 10.0, *) else { return }
+    let center = UNUserNotificationCenter.current()
+    guard !(center.delegate === self) else { return }
+    delegateBehind = center.delegate
+    center.delegate = self
+  }
+
   
   // CRITICAL: Register APNS token with Firebase
   override func application(_ application: UIApplication, 
@@ -133,12 +168,84 @@ import FirebaseMessaging
                                        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
     let userInfo = notification.request.content.userInfo
     print("🔔 Will present notification: \(userInfo)")
-    
-    if #available(iOS 14.0, *) {
-      completionHandler([.banner, .sound, .badge])
-    } else {
-      completionHandler([.alert, .sound, .badge])
+
+    // Anything this app did not receive from FCM belongs to whichever plugin
+    // built it — hand it back untouched.
+    if userInfo["gcm.message_id"] == nil,
+       let behind = delegateBehind,
+       behind.responds(to: #selector(UNUserNotificationCenterDelegate.userNotificationCenter(_:willPresent:withCompletionHandler:))) {
+      behind.userNotificationCenter?(center,
+                                     willPresent: notification,
+                                     withCompletionHandler: completionHandler)
+      return
     }
+
+    var options: UNNotificationPresentationOptions
+    if #available(iOS 14.0, *) {
+      options = [.banner, .badge]
+    } else {
+      options = [.alert, .badge]
+    }
+
+    // The tone that ships with the app cannot be named on the APNs payload from
+    // here, so the banner is presented without a sound and the tone is played
+    // alongside it. Playing it here rather than from Dart keeps it on the one
+    // callback that is certain to run for this notification.
+    if isChatNotification(userInfo) && usesAppChatTone() {
+      playChatTone()
+    } else {
+      options.insert(.sound)
+    }
+
+    completionHandler(options)
+  }
+
+  /// Held for as long as it plays — an AVAudioPlayer stops the moment it is
+  /// released.
+  private var chatTonePlayer: AVAudioPlayer?
+
+  /// Plays `assets/sounds/messageReceiveNotification.mp3` out of the Flutter
+  /// asset bundle.
+  private func playChatTone() {
+    let assetKey = FlutterDartProject.lookupKey(forAsset: "assets/sounds/messageReceiveNotification.mp3")
+    guard let path = Bundle.main.path(forResource: assetKey, ofType: nil) else {
+      print("❌ Chat tone missing from the bundle: \(assetKey)")
+      return
+    }
+
+    do {
+      // .ambient keeps the tone in a notification's lane: it mixes with
+      // whatever is already playing instead of interrupting it, and it follows
+      // the ring/silent switch the way any notification sound does.
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+      try session.setActive(true)
+
+      let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+      chatTonePlayer = player
+      player.prepareToPlay()
+      player.play()
+      print("🎵 Chat tone playing")
+    } catch {
+      print("❌ Chat tone failed: \(error.localizedDescription)")
+    }
+  }
+
+  /// Whether the user picked the app's own chat tone over the phone default.
+  ///
+  /// Written from Dart through SharedPreferences, which stores into
+  /// `UserDefaults` under a `flutter.` prefix. Absent means the app tone,
+  /// matching `ChatNotificationSoundStore.fallback`.
+  private func usesAppChatTone() -> Bool {
+    return UserDefaults.standard.string(forKey: "flutter.chatNotificationSound") != "phoneDefault"
+  }
+
+  /// Guest booking (35) and transport (10) pushes are not chat, so they keep
+  /// the system sound whatever the chat tone is set to.
+  private func isChatNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+    guard let msgType = userInfo["msg_type"] else { return true }
+    let value = String(describing: msgType)
+    return value != "35" && value != "10"
   }
 
   // Handle notification tap
@@ -147,7 +254,17 @@ import FirebaseMessaging
                                        withCompletionHandler completionHandler: @escaping () -> Void) {
     let userInfo = response.notification.request.content.userInfo
     print("👆 User tapped notification: \(userInfo)")
-    
+
+    // The plugin behind this delegate used to receive taps directly, and its
+    // action bookkeeping still expects them — it calls the completion handler.
+    if let behind = delegateBehind,
+       behind.responds(to: #selector(UNUserNotificationCenterDelegate.userNotificationCenter(_:didReceive:withCompletionHandler:))) {
+      behind.userNotificationCenter?(center,
+                                     didReceive: response,
+                                     withCompletionHandler: completionHandler)
+      return
+    }
+
     completionHandler()
   }
 }

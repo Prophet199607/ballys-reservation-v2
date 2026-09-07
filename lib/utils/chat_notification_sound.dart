@@ -84,13 +84,20 @@ class ChatNotificationSoundStore {
 
   /// Plays the app tone through the media output.
   ///
-  /// Used where no notification is posted and so no channel sound fires: the
-  /// settings screen preview, a message for the conversation already on screen,
-  /// and iOS in the foreground (where the banner — and its sound — is
-  /// suppressed and only the badge is updated). The phone's own notification
-  /// sound is not reachable from Dart, so [ChatNotificationSound.phoneDefault]
-  /// stays silent on these paths and is heard on the notification itself.
+  /// Used where the notification itself carries no tone: the settings screen
+  /// preview, a message for the conversation already on screen, and iOS in the
+  /// foreground — there the banner comes from APNs, whose sound the app cannot
+  /// choose, so `AppDelegate.willPresent` drops the system sound for chat
+  /// messages while this option is on and lets this play instead. The phone's
+  /// own notification sound is not reachable from Dart, so
+  /// [ChatNotificationSound.phoneDefault] stays silent on these paths and is
+  /// heard on the notification itself.
   static Future<void> playPreview() async {
+    // The player activates the audio session itself. Leaving that to
+    // just_audio is deliberate: without it iOS never activates the session and
+    // the tone plays silently. The cost is that the tone goes out as media
+    // audio — it is heard through the ring/silent switch and briefly takes the
+    // session from anything else playing.
     final player = AudioPlayer();
     try {
       await player.setAsset(assetPath);

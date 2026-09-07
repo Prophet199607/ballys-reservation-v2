@@ -129,19 +129,12 @@ class NotificationService {
 
       String? notificationChatId;
 
-      final msgType = message.data['msg_type']?.toString();
-      // Guest booking (35) and transport (10) are not chat, so the chat tone
-      // does not belong to them.
-      final isChatMessage = msgType != '35' && msgType != '10';
-
-      // For iOS, skip custom notifications and let FCM handle natively.
-      // In the foreground iOS shows no banner (badge only, see
-      // BadgeService), so the tone is played in-app instead of by a channel.
+      // For iOS, skip custom notifications and let FCM handle natively. The
+      // chat tone is played by AppDelegate.willPresent, which owns the banner
+      // this push produces — doing it there rather than here keeps it off the
+      // Dart round trip and out of step with the banner.
       if (Platform.isIOS) {
         await _updateBadgeCount(1);
-        if (isChatMessage) {
-          unawaited(ChatNotificationSoundStore.playIfAppTone());
-        }
         return;
       }
 
