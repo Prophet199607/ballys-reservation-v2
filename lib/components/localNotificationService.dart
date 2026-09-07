@@ -235,15 +235,24 @@ class NotificationService {
         return;
       }
 
+      // Group pushes wrap the chat fields in a `Details` JSON string; 1:1
+      // pushes send the same fields flat on the data map. Read `Details`
+      // first and fall back to the flat keys, or a 1:1 tap would carry an
+      // empty chatId and land on the chat list instead of the conversation.
+      String field(String key) =>
+          chatDetails?[key]?.toString().isNotEmpty == true
+              ? chatDetails![key].toString()
+              : message.data[key]?.toString() ?? '';
+
       Map<String, String> payload = {
         'type': message.data['msg_type']?.toString() ?? 'chat',
         'screen': 'chat',
-        'chatId': chatDetails?['chatId']?.toString() ?? '',
-        'senderId': chatDetails?['senderId']?.toString() ?? '',
-        'senderName': chatDetails?['senderName']?.toString() ?? '',
-        'hostName': chatDetails?['hostName']?.toString() ?? '',
+        'chatId': notificationChatId ?? '',
+        'senderId': field('senderId'),
+        'senderName': field('senderName'),
+        'hostName': field('hostName'),
         // 'group_message' tells the chat screen the chatId is a group id.
-        'action': chatDetails?['action']?.toString() ?? '',
+        'action': field('action'),
       };
 
       print(

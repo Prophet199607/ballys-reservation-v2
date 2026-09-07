@@ -325,39 +325,27 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // The master id lets the transport list highlight the request this
       // notification is about.
       final masterId = message.data['MasterId']?.toString().trim() ?? '';
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          final context = navigatorKey.currentContext;
-          if (context != null && context.mounted) {
-            NotificationService.popPagelessRoutes();
-            context.go(AppNavigation.transportLocation(masterId));
-          }
-        });
+      _navigateOnNotificationTap((context) {
+        context.go(AppNavigation.transportLocation(masterId));
       });
       return;
     }
 
     // ─── Guest Booking Notification (msg_type: 35) ───────────────────────────
     if (message.data['msg_type'] == '35') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          final context = navigatorKey.currentContext;
-          if (context != null && context.mounted) {
-            NotificationService.popPagelessRoutes();
-            final booking = GuestBooking(
-              idNo: 0,
-              mid: message.data['MID'] ?? '',
-              pkgStart: message.data['Pkg_Start'] ?? '',
-              pkgEnd: message.data['Pkg_End'] ?? '',
-              insertDate: message.data['InsertDate'] ?? '',
-              pkgStatus: false,
-            );
+      _navigateOnNotificationTap((context) {
+        final booking = GuestBooking(
+          idNo: 0,
+          mid: message.data['MID'] ?? '',
+          pkgStart: message.data['Pkg_Start'] ?? '',
+          pkgEnd: message.data['Pkg_End'] ?? '',
+          insertDate: message.data['InsertDate'] ?? '',
+          pkgStatus: false,
+        );
 
-            context.go('/guest-bookings/view-booking', extra: {
-              'booking': booking,
-              'isPending': true,
-            });
-          }
+        context.go('/guest-bookings/view-booking', extra: {
+          'booking': booking,
+          'isPending': true,
         });
       });
       return;
@@ -393,18 +381,32 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       };
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 500), () {
-        final context = navigatorKey.currentContext;
-        if (context != null && context.mounted) {
-          NotificationService.popPagelessRoutes();
-          if (chatData != null && chatData['chatId'] != '') {
-            context.go('/menu/chats', extra: chatData);
-          } else {
-            context.go('/menu/chats');
-          }
-        }
-      });
+    _navigateOnNotificationTap((context) {
+      if (chatData != null && chatData['chatId'] != '') {
+        context.go('/menu/chats', extra: chatData);
+      } else {
+        context.go('/menu/chats');
+      }
+    });
+  }
+
+  /// Runs a notification tap's navigation once the app has had a moment to
+  /// settle, dropping any pageless route (an open chat detail) on the way.
+  ///
+  /// This deliberately does not wrap the delay in `addPostFrameCallback`:
+  /// that does not request a frame, and iOS resumes from a notification tap
+  /// without necessarily producing one. The callback then stayed pending
+  /// until the user happened to touch the screen — which is exactly when the
+  /// deferred navigation used to fire. A timer runs regardless of frames, and
+  /// go_router schedules its own frame when it routes.
+  void _navigateOnNotificationTap(
+    void Function(BuildContext context) navigate,
+  ) {
+    Future.delayed(const Duration(milliseconds: 500), () {
+      final context = navigatorKey.currentContext;
+      if (context == null || !context.mounted) return;
+      NotificationService.popPagelessRoutes();
+      navigate(context);
     });
   }
 
@@ -866,6 +868,20 @@ class _SplashScreenState extends State<SplashScreen>
             'openChat': true,
           };
         } catch (e) {}
+      }
+
+      // 1:1 pushes carry the chat fields flat instead of inside `Details`.
+      // Without this the splash would send them to '/home' three seconds in
+      // and race the tap handler that is opening the conversation.
+      if (notificationChatData == null &&
+          initialMessage.data.containsKey('chatId')) {
+        notificationChatData = {
+          'chatId': initialMessage.data['chatId'] ?? '',
+          'senderName': initialMessage.data['senderName'] ?? '',
+          'senderId': initialMessage.data['senderId'] ?? '',
+          'action': initialMessage.data['action'] ?? '',
+          'openChat': true,
+        };
       }
     } else if (receivedAction != null &&
         receivedAction.payload != null) {
