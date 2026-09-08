@@ -17,11 +17,37 @@ class NotificationStore {
   /// Pings that only tell the client a thread changed — an edited message, a
   /// reaction — and carry no body of their own. They must never raise a
   /// banner or bump the badge: nothing new was said.
+  ///
+  /// The backend sends these as an ordinary chat push (`msg_type: 11`) and
+  /// says what they really are inside `Details`, in `action` and a `silent`
+  /// flag — so the top-level type alone never identifies one.
   static bool isSilentThreadUpdate(RemoteMessage message) {
+    const silentActions = {
+      'message_edit',
+      'message_edited',
+      'message_reaction',
+    };
+
     final type = (message.data['msg_type'] ?? message.data['type'])?.toString();
-    return type == 'message_edit' ||
-        type == 'message_edited' ||
-        type == 'message_reaction';
+    if (silentActions.contains(type)) return true;
+
+    final details = _details(message.data);
+    if (details == null) return false;
+    if (silentActions.contains(details['action']?.toString())) return true;
+    return details['silent']?.toString().toLowerCase() == 'true';
+  }
+
+  /// The `Details` payload decoded, or null when the push has none or it is
+  /// not the JSON object it is meant to be.
+  static Map<String, dynamic>? _details(Map<String, dynamic> data) {
+    final raw = data['Details']?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = json.decode(raw);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Chat pushes are handled by the chat screens, so they never enter history.
@@ -32,15 +58,7 @@ class NotificationStore {
     if (data['screen']?.toString() == 'chat') return true;
     if (data['chatId'] != null || data['chat_id'] != null) return true;
 
-    final details = data['Details']?.toString();
-    if (details != null && details.isNotEmpty) {
-      try {
-        final decoded = json.decode(details);
-        if (decoded is Map && decoded['chatId'] != null) return true;
-      } catch (_) {
-        // Not JSON — fall through, treat as non-chat.
-      }
-    }
+    if (_details(data)?['chatId'] != null) return true;
 
     return false;
   }

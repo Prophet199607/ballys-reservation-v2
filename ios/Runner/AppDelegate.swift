@@ -154,12 +154,33 @@ import FirebaseMessaging
     print("❌ Failed to register for remote notifications: \(error.localizedDescription)")
   }
   
-  // Handle remote notifications in background
-  override func application(_ application: UIApplication, 
-                            didReceiveRemoteNotification userInfo: [AnyHashable : Any], 
+  // Handle remote notifications, foreground and background alike
+  override func application(_ application: UIApplication,
+                            didReceiveRemoteNotification userInfo: [AnyHashable : Any],
                             fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
     print("📬 Received remote notification: \(userInfo)")
-    completionHandler(.newData)
+
+    // `FirebaseAppDelegateProxyEnabled` is false in Info.plist, so nothing
+    // swizzles this callback: handing the payload up to super is the only
+    // thing that puts it in front of firebase_messaging, and so the only
+    // thing that raises it on `FirebaseMessaging.onMessage` in Dart.
+    //
+    // A silent push — a reaction or an edit, sent as `content-available`
+    // with no alert — arrives here and nowhere else, because willPresent
+    // below only runs for a notification that has something to show.
+    // Answering the completion handler here instead of forwarding it
+    // swallowed those updates, which is why a reaction never reached an open
+    // chat on iOS while Android, whose service hands every data message
+    // straight to Dart, was fine.
+    let once = OneShotFetchCompletion(completionHandler)
+    super.application(application, didReceiveRemoteNotification: userInfo) { result in
+      once.call(result)
+    }
+    // Nothing downstream is obliged to answer, and iOS punishes a background
+    // handler that is left hanging.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+      once.call(.noData)
+    }
   }
   
   // Show notification when app is in foreground
@@ -179,6 +200,19 @@ import FirebaseMessaging
                                      withCompletionHandler: completionHandler)
       return
     }
+
+    // A push that carries an alert never reaches
+    // application:didReceiveRemoteNotification:fetchCompletionHandler: while
+    // the app is in the foreground, so this callback is the only place
+    // firebase_messaging can hear about one — and taking the notification
+    // centre delegate above cut it out of the chain that used to deliver it.
+    // Handing the notification up to super puts it back, which is what raises
+    // the message on `FirebaseMessaging.onMessage` and so what makes the open
+    // chat and the chat list refresh. Its presentation choice is swallowed:
+    // the options below are this app's to make, not the plugin's.
+    super.userNotificationCenter(center,
+                                 willPresent: notification,
+                                 withCompletionHandler: { _ in })
 
     var options: UNNotificationPresentationOptions
     if #available(iOS 14.0, *) {
@@ -255,6 +289,16 @@ import FirebaseMessaging
     let userInfo = response.notification.request.content.userInfo
     print("👆 User tapped notification: \(userInfo)")
 
+    // Same story as willPresent: a tap is how `onMessageOpenedApp` is raised,
+    // and firebase_messaging only learns of one through the delegate chain
+    // this class stepped in front of. Its completion handler is swallowed —
+    // the one below is answered once, by whoever this tap is really for.
+    if userInfo["gcm.message_id"] != nil {
+      super.userNotificationCenter(center,
+                                   didReceive: response,
+                                   withCompletionHandler: {})
+    }
+
     // The plugin behind this delegate used to receive taps directly, and its
     // action bookkeeping still expects them — it calls the completion handler.
     if let behind = delegateBehind,
@@ -283,5 +327,25 @@ extension AppDelegate: MessagingDelegate {
         userInfo: ["token": token]
       )
     }
+  }
+}
+
+/// Runs a `fetchCompletionHandler` at most once, whichever of the plugin chain
+/// and the timeout beside it gets there first: calling one twice is a crash,
+/// and never calling it costs the app its background time.
+private final class OneShotFetchCompletion {
+  private let lock = NSLock()
+  private var handler: ((UIBackgroundFetchResult) -> Void)?
+
+  init(_ handler: @escaping (UIBackgroundFetchResult) -> Void) {
+    self.handler = handler
+  }
+
+  func call(_ result: UIBackgroundFetchResult) {
+    lock.lock()
+    let pending = handler
+    handler = nil
+    lock.unlock()
+    pending?(result)
   }
 }

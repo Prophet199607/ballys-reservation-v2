@@ -17,6 +17,7 @@ import 'package:ballys_reservation_app/data/services/typing_service.dart';
 import 'package:ballys_reservation_app/models/chat_contact.dart';
 import 'package:ballys_reservation_app/models/chat_group.dart';
 import 'package:ballys_reservation_app/models/chat_message.dart';
+import 'package:ballys_reservation_app/data/services/notification_store.dart';
 import 'package:ballys_reservation_app/providers/chat_font_settings_provider.dart';
 import 'package:ballys_reservation_app/screens/chat_settings_screen.dart';
 import 'package:ballys_reservation_app/providers/font_settings_provider.dart';
@@ -645,11 +646,12 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
           message.data.containsKey('message') ||
           message.data.containsKey('Details');
       // Silent edit/reaction pings carry no message body — they only tell the
-      // client the thread changed, so the list has to be pulled again.
-      final bool isSilentUpdate =
-          msgType == 'message_reaction' ||
-          msgType == 'message_edit' ||
-          msgType == 'message_edited';
+      // client the thread changed, so the list has to be pulled again. They
+      // come in dressed as ordinary chat pushes, so what they are is read off
+      // `Details` rather than the top-level type.
+      final bool isSilentUpdate = NotificationStore.isSilentThreadUpdate(
+        message,
+      );
       if (isChatMessage || isSilentUpdate) {
         if (chatId == null ||
             chatId.isEmpty ||
