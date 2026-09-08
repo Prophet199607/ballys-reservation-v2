@@ -31,6 +31,16 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  # Firestore as a prebuilt xcframework instead of source. Building it from
+  # source drags in gRPC-Core 1.62, whose basic_seq.h no longer parses under
+  # the clang in Xcode 16+ ("a template argument list is expected after a name
+  # prefixed by the template keyword"). The binary is Invertase's, the same one
+  # the FlutterFire docs point at, and the tag must stay in step with the
+  # FirebaseFirestore version in Podfile.lock — bump both together.
+  pod 'FirebaseFirestore',
+    :git => 'https://github.com/invertase/firestore-ios-sdk-frameworks.git',
+    :tag => '10.25.0'
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths
@@ -40,6 +50,21 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # BoringSSL-GRPC (pulled in by cloud_firestore's gRPC stack) ships
+    # "-GCC_WARN_INHIBIT_ALL_WARNINGS" as a per-file compiler flag. Clang reads
+    # that as the "-G" option, which it dropped for Apple targets, so every
+    # build fails with "unsupported option '-G' for target arm64-apple-ios".
+    # Strip it — it only ever meant "silence this pod's warnings".
+    if target.name == 'BoringSSL-GRPC'
+      target.source_build_phase.files.each do |file|
+        next unless file.settings && file.settings['COMPILER_FLAGS']
+        flags = file.settings['COMPILER_FLAGS'].split
+        flags.reject! { |flag| flag.start_with?('-G') }
+        file.settings['COMPILER_FLAGS'] = flags.join(' ')
+      end
+    end
+
      target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'

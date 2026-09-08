@@ -10,8 +10,10 @@ import 'package:ballys_reservation_app/components/chat_wallpaper.dart';
 import 'package:ballys_reservation_app/components/forward_message_sheet.dart';
 import 'package:ballys_reservation_app/components/group_details_sheet.dart';
 import 'package:ballys_reservation_app/components/voice_message_bubble.dart';
+import 'package:ballys_reservation_app/components/typing_indicator_bubble.dart';
 import 'package:ballys_reservation_app/components/voice_recorder_widgets.dart';
 import 'package:ballys_reservation_app/data/services/firebase_api_service.dart';
+import 'package:ballys_reservation_app/data/services/typing_service.dart';
 import 'package:ballys_reservation_app/models/chat_contact.dart';
 import 'package:ballys_reservation_app/models/chat_group.dart';
 import 'package:ballys_reservation_app/models/chat_message.dart';
@@ -236,6 +238,16 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
   String? _currentUserName;
   String? _currentUserUuid;
 
+  // ── Typing indicators ──
+  /// Our own outbound status. Created once the name/uuid have loaded, since
+  /// both go on the wire; until then keystrokes simply publish nothing.
+  TypingSignal? _typingSignal;
+
+  /// Everyone Firestore says is typing here, us included — our own entry is
+  /// filtered out when the header is built.
+  List<TypingUser> _typingUsers = const [];
+  StreamSubscription<List<TypingUser>>? _typingSub;
+
   /// Picture shown in the app bar. Seeded from the row we were opened with and
   /// re-fetched for groups, since a chat opened from a notification carries no
   /// avatar url of its own.
@@ -383,6 +395,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     _scrollController.addListener(_onScroll);
     _setupForegroundMessageListener();
     _startReadStatusPolling();
+    _watchTyping();
     _messageFocusNode.addListener(_onFocusChange);
     BadgeService().clearBadge();
   }
@@ -392,6 +405,9 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     _readStatusPollTimer?.cancel();
     _highlightTimer?.cancel();
     _foregroundMessageSubscription?.cancel();
+    _typingSub?.cancel();
+    // Closing the screen mid-word still has to clear the other side.
+    _typingSignal?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     CurrentChatState().clearCurrentChat();
     _messageController.dispose();
@@ -430,6 +446,9 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
       } else {
         _discardRecording();
       }
+      // Backgrounding the app is not typing, and the doc would otherwise sit
+      // there until it went stale.
+      _typingSignal?.stop();
     }
     if (state == AppLifecycleState.resumed) {
       _fetchMessagesFromApi(silent: true);
@@ -445,6 +464,126 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
         _fetchMessagesFromApi(silent: true, updateReadStatusOnly: true);
       }
     });
+  }
+
+  // ─── Typing indicators ──────────────────────────────────────────────────────
+
+  /// Subscribes to who is typing here. This reads Firestore directly rather
+  /// than the chat API: the status is deliberately kept out of the REST
+  /// responses and push, because it changes far too often to carry there.
+  void _watchTyping() {
+    _typingSub = TypingService.watch(widget.contact.chatUuid).listen((typers) {
+      if (!mounted) return;
+      setState(() => _typingUsers = typers);
+    }, onError: (_) {});
+  }
+
+  /// Who to name in the header, us excluded. Our own status round-trips
+  /// through Firestore like anyone else's, so it comes back on this stream.
+  List<TypingUser> get _othersTyping => _typingUsers
+      .where((t) => !t.matches(_currentUserUuid, FirebaseApiService.appType))
+      .toList();
+
+  /// The header line while someone is typing, or null when nobody is. A 1:1
+  /// chat has only one person it could be, so it goes unnamed; a group names
+  /// who, up to two, and counts the rest.
+  String? _typingLabel() {
+    final typers = _othersTyping;
+    if (typers.isEmpty) return null;
+    if (!widget.isGroup) return 'typing…';
+
+    final names = typers
+        .map((t) => t.userName.isEmpty ? _memberName(t) : t.userName)
+        .where((n) => n.isNotEmpty)
+        .toList();
+    if (names.isEmpty) {
+      return typers.length == 1 ? 'typing…' : '${typers.length} are typing…';
+    }
+    if (names.length == 1) return '${names.first} is typing…';
+    if (names.length == 2) return '${names[0]}, ${names[1]} are typing…';
+    return '${names[0]}, ${names[1]} +${names.length - 2} are typing…';
+  }
+
+  /// The typer's entry in the group roster, when we have one. It carries the
+  /// avatar, and the name a typing doc written without one is missing.
+  GroupMember? _memberFor(TypingUser typer) {
+    for (final member in _groupMembers) {
+      if (typer.matches(member.userUuid, member.appType)) return member;
+    }
+    return null;
+  }
+
+  String _memberName(TypingUser typer) => _memberFor(typer)?.name ?? '';
+
+  /// The bubble of bouncing dots under the newest message, the way WhatsApp
+  /// draws it — same chrome as an incoming message, dots where the text goes.
+  ///
+  /// Only the first typer gets a bubble; a group with several of them says so
+  /// in the header instead of stacking bubbles down the thread.
+  Widget _buildTypingBubble(FontSettings fontSettings) {
+    final typers = _othersTyping;
+    if (typers.isEmpty) return const SizedBox.shrink();
+    final typer = typers.first;
+
+    final member = _memberFor(typer);
+    final name = typer.userName.isNotEmpty
+        ? typer.userName
+        : (member?.name ?? widget.contact.name);
+    final avatarUrl = widget.isGroup ? member?.avatarUrl : widget.contact.avatarUrl;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          UserAvatar(
+            avatarUrl: avatarUrl,
+            initials: widget.isGroup
+                ? ChatContact.generateInitials(name)
+                : widget.contact.initials,
+            backgroundColor: widget.isGroup
+                ? ChatContact.generateColorFromName(name)
+                : widget.contact.avatarColor,
+            radius: 15,
+            fontSize: fontSettings.fontSize - 4,
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: ChatColors.incomingBubble,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Groups name who is writing, exactly as their messages do.
+                if (widget.isGroup && name.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        color: ChatContact.generateColorFromName(name),
+                        fontSize: fontSettings.fontSize - 4,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                const SizedBox(
+                  // Held to the height of a line of text, so the bubble does
+                  // not resize as the dots rise and fall.
+                  height: 14,
+                  child: Center(child: TypingDots()),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _onFocusChange() {
@@ -495,6 +634,10 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
         _currentUserName = userName;
         _currentUserUuid = deviceId;
       });
+      _typingSignal = TypingSignal(
+        chatId: widget.contact.chatUuid,
+        userName: userName,
+      );
     } catch (_) {}
   }
 
@@ -853,6 +996,12 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     final hasText = value.trim().isNotEmpty;
     if (hasText != _hasComposerText) {
       setState(() => _hasComposerText = hasText);
+    }
+    // Debounced inside the signal, so this is safe on every keystroke.
+    if (hasText) {
+      _typingSignal?.keystroke();
+    } else {
+      _typingSignal?.stop();
     }
 
     if (!widget.isGroup || _groupMembers.isEmpty) return;
@@ -1383,6 +1532,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     });
     _messageController.clear();
     setState(() => _hasComposerText = false);
+    _typingSignal?.stop();
     _pickedMentions.clear();
     _syncMentionHighlights();
     _hideMentionSuggestions();
@@ -5804,18 +5954,29 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                Text(
-                                  widget.isGroup
-                                      ? (widget.groupMemberCount > 0
-                                            ? '${widget.groupMemberCount} member${widget.groupMemberCount == 1 ? '' : 's'}'
-                                            : 'Tap for group info')
-                                      : (widget.contact.isOnline
-                                            ? 'Online'
-                                            : 'Last seen recently'),
-                                  style: TextStyle(
-                                    fontSize: fontSettings.fontSize - 4,
-                                    fontWeight: FontWeight.normal,
-                                  ),
+                                Builder(
+                                  builder: (context) {
+                                    // Typing takes the subtitle over from the
+                                    // member count / presence line while it
+                                    // lasts, the way every chat app does it.
+                                    final typing = _typingLabel();
+                                    return Text(
+                                      typing ??
+                                          (widget.isGroup
+                                              ? (widget.groupMemberCount > 0
+                                                    ? '${widget.groupMemberCount} member${widget.groupMemberCount == 1 ? '' : 's'}'
+                                                    : 'Tap for group info')
+                                              : (widget.contact.isOnline
+                                                    ? 'Online'
+                                                    : 'Last seen recently')),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: fontSettings.fontSize - 4,
+                                        fontWeight: FontWeight.normal,
+                                      ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),
@@ -5899,7 +6060,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                       onTap: () =>
                           FocusManager.instance.primaryFocus?.unfocus(),
                       child: ChatWallpaper(
-                        child: _messages.isEmpty
+                        child: _messages.isEmpty && _othersTyping.isEmpty
                             ? Center(
                                 child: Text(
                                   'No messages yet',
@@ -5919,11 +6080,23 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                                     reverse: true,
                                     itemCount:
                                         _messages.length +
-                                        (_hasMoreOlder ? 1 : 0),
+                                        (_hasMoreOlder ? 1 : 0) +
+                                        (_othersTyping.isEmpty ? 0 : 1),
                                     itemBuilder: (ctx, index) {
-                                      // Reversed list: the last row is the top
-                                      // of the conversation, where the page
-                                      // before it is fetched.
+                                      // Reversed list, so row 0 sits at the
+                                      // bottom: the typing bubble belongs
+                                      // under the newest message.
+                                      if (_othersTyping.isNotEmpty) {
+                                        if (index == 0) {
+                                          return _buildTypingBubble(
+                                            fontSettings,
+                                          );
+                                        }
+                                        index -= 1;
+                                      }
+                                      // The last row is the top of the
+                                      // conversation, where the page before it
+                                      // is fetched.
                                       if (index >= _messages.length) {
                                         return _buildOlderMessagesLoader();
                                       }

@@ -42,6 +42,7 @@ class FirebaseApiService {
     'uploadFiles': '/api/chats', // base; full path: /api/chats/{chatId}/upload/multiple
     'sendVoice': '/api/chats', // base; full path: /api/chats/{chatId}/voice
     'pinChat': '/api/chats', // base; full path: /api/chats/{chatId}/pin | /unpin
+    'typing': '/api/chats', // base; full path: /api/chats/{chatId}/typing
     'createGroup': '/api/groups/create',
     'fetchUserGroups': '/api/groups/user',
     'groups': '/api/groups', // base; full path: /api/groups/{groupId}
@@ -375,6 +376,32 @@ class FirebaseApiService {
         'messageIds': messageIds,
         'userId': deviceId,
         'appType': 2, 
+      });
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Publishes whether we are typing in [chatId]. The backend does not put
+  /// this on the REST API or push — it writes `chats/{chatId}/typing/{uuid}_{appType}`
+  /// in Firestore, which the other participants watch live (see TypingService).
+  ///
+  /// [userName] only matters when starting; stopping deletes the doc.
+  static Future<Map<String, dynamic>> setTyping({
+    required String chatId,
+    required bool isTyping,
+    String? userName,
+  }) async {
+    try {
+      final domain = await resolveDomain();
+      final deviceId = await DeviceId.get();
+      final url = '$domain${endpoints['typing']}/$chatId/typing';
+      return await postRequest(url, {
+        'userId': deviceId,
+        'appType': appType,
+        'isTyping': isTyping,
+        if (isTyping && userName != null && userName.isNotEmpty)
+          'userName': userName,
       });
     } catch (e) {
       return {'success': false, 'error': e.toString()};
