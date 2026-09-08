@@ -486,22 +486,21 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
 
   /// The header line while someone is typing, or null when nobody is. A 1:1
   /// chat has only one person it could be, so it goes unnamed; a group names
-  /// who, up to two, and counts the rest.
+  /// everyone, and the header ellipsises the line if they do not all fit.
   String? _typingLabel() {
     final typers = _othersTyping;
     if (typers.isEmpty) return null;
     if (!widget.isGroup) return 'typing…';
 
-    final names = typers
-        .map((t) => t.userName.isEmpty ? _memberName(t) : t.userName)
-        .where((n) => n.isNotEmpty)
-        .toList();
+    final names = typers.map(_typerName).where((n) => n.isNotEmpty).toList();
+    // Nobody named — an older client can write a typing doc without a name,
+    // and the roster may not have loaded yet either.
     if (names.isEmpty) {
       return typers.length == 1 ? 'typing…' : '${typers.length} are typing…';
     }
     if (names.length == 1) return '${names.first} is typing…';
-    if (names.length == 2) return '${names[0]}, ${names[1]} are typing…';
-    return '${names[0]}, ${names[1]} +${names.length - 2} are typing…';
+    final last = names.removeLast();
+    return '${names.join(', ')} and $last are typing…';
   }
 
   /// The typer's entry in the group roster, when we have one. It carries the
@@ -513,23 +512,24 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
     return null;
   }
 
-  String _memberName(TypingUser typer) => _memberFor(typer)?.name ?? '';
+  /// What to call this typer: the name they published, the roster's name if
+  /// they published none, and in a 1:1 chat the person we opened.
+  String _typerName(TypingUser typer) {
+    if (typer.userName.isNotEmpty) return typer.userName;
+    final rostered = _memberFor(typer)?.name ?? '';
+    if (rostered.isNotEmpty) return rostered;
+    return widget.isGroup ? '' : widget.contact.name;
+  }
 
-  /// The bubble of bouncing dots under the newest message, the way WhatsApp
-  /// draws it — same chrome as an incoming message, dots where the text goes.
+  /// The bouncing dots under the newest message, the way WhatsApp draws them —
+  /// an incoming bubble with dots where the text would be.
   ///
-  /// Only the first typer gets a bubble; a group with several of them says so
-  /// in the header instead of stacking bubbles down the thread.
-  Widget _buildTypingBubble(FontSettings fontSettings) {
+  /// Nobody is named here. One bubble covers the whole group no matter how
+  /// many people are writing; who they are is said by the faces beside it, and
+  /// spelled out in the header.
+  Widget _buildTypingBubbles(FontSettings fontSettings) {
     final typers = _othersTyping;
     if (typers.isEmpty) return const SizedBox.shrink();
-    final typer = typers.first;
-
-    final member = _memberFor(typer);
-    final name = typer.userName.isNotEmpty
-        ? typer.userName
-        : (member?.name ?? widget.contact.name);
-    final avatarUrl = widget.isGroup ? member?.avatarUrl : widget.contact.avatarUrl;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -537,17 +537,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
         mainAxisAlignment: MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          UserAvatar(
-            avatarUrl: avatarUrl,
-            initials: widget.isGroup
-                ? ChatContact.generateInitials(name)
-                : widget.contact.initials,
-            backgroundColor: widget.isGroup
-                ? ChatContact.generateColorFromName(name)
-                : widget.contact.avatarColor,
-            radius: 15,
-            fontSize: fontSettings.fontSize - 4,
-          ),
+          _buildTypingAvatars(typers, fontSettings),
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -555,32 +545,77 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
               color: ChatColors.incomingBubble,
               borderRadius: BorderRadius.circular(20),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Groups name who is writing, exactly as their messages do.
-                if (widget.isGroup && name.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      name,
-                      style: TextStyle(
-                        color: ChatContact.generateColorFromName(name),
-                        fontSize: fontSettings.fontSize - 4,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                const SizedBox(
-                  // Held to the height of a line of text, so the bubble does
-                  // not resize as the dots rise and fall.
-                  height: 14,
-                  child: Center(child: TypingDots()),
-                ),
-              ],
+            child: const SizedBox(
+              // Held to the height of a line of text, so the bubble does not
+              // resize as the dots rise and fall.
+              height: 14,
+              child: Center(child: TypingDots()),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// The faces to the left of the bubble: one in a 1:1 chat, and in a group
+  /// everyone writing, fanned out so each new face overlaps the one before it.
+  ///
+  /// Only the first few are drawn — past that the row would crowd the bubble
+  /// off the screen, and the header already names everyone.
+  Widget _buildTypingAvatars(
+    List<TypingUser> typers,
+    FontSettings fontSettings,
+  ) {
+    const double radius = 15;
+    const double diameter = radius * 2;
+
+    /// How far each face sits past the one under it. Less than [diameter], so
+    /// they overlap rather than sit in a row.
+    const double step = 19;
+    const int maxFaces = 3;
+
+    final shown = typers.take(maxFaces).toList();
+    final overlapping = shown.length > 1;
+
+    Widget faceFor(TypingUser typer) {
+      final name = _typerName(typer);
+      final avatar = UserAvatar(
+        avatarUrl: widget.isGroup
+            ? _memberFor(typer)?.avatarUrl
+            : widget.contact.avatarUrl,
+        initials: widget.isGroup
+            ? ChatContact.generateInitials(name)
+            : widget.contact.initials,
+        backgroundColor: widget.isGroup
+            ? ChatContact.generateColorFromName(name)
+            : widget.contact.avatarColor,
+        radius: overlapping ? radius - 1.5 : radius,
+        fontSize: fontSettings.fontSize - 4,
+      );
+      // Overlapping faces need a rim to read as separate circles rather than
+      // one smeared shape. A single face sits on the wallpaper and needs none.
+      if (!overlapping) return avatar;
+      return Container(
+        decoration: const BoxDecoration(
+          color: ChatColors.incomingBubble,
+          shape: BoxShape.circle,
+        ),
+        padding: const EdgeInsets.all(1.5),
+        child: avatar,
+      );
+    }
+
+    if (shown.length == 1) return faceFor(shown.first);
+
+    return SizedBox(
+      width: diameter + step * (shown.length - 1),
+      height: diameter,
+      child: Stack(
+        children: [
+          // Later entries are painted last, so each face laps over the one
+          // before it rather than under it.
+          for (var i = 0; i < shown.length; i++)
+            Positioned(left: i * step, child: faceFor(shown[i])),
         ],
       ),
     );
@@ -6088,7 +6123,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
                                       // under the newest message.
                                       if (_othersTyping.isNotEmpty) {
                                         if (index == 0) {
-                                          return _buildTypingBubble(
+                                          return _buildTypingBubbles(
                                             fontSettings,
                                           );
                                         }
