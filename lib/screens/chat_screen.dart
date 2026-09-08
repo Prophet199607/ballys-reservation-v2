@@ -7,6 +7,7 @@ import 'package:ballys_reservation_app/components/group_details_sheet.dart';
 import 'package:ballys_reservation_app/components/notification_banner.dart';
 import 'package:ballys_reservation_app/data/services/firebase_api_service.dart';
 import 'package:ballys_reservation_app/data/services/notification_store.dart';
+import 'package:ballys_reservation_app/data/services/typing_service.dart';
 import 'package:ballys_reservation_app/models/chat_contact.dart';
 import 'package:ballys_reservation_app/models/chat_group.dart';
 import 'package:ballys_reservation_app/providers/chat_font_settings_provider.dart';
@@ -91,6 +92,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // Add message subscription
   StreamSubscription<RemoteMessage>? _messageSubscription;
 
+  /// One Firestore typing listener per conversation on screen, so a row can
+  /// say "typing…" in place of its last message the way WhatsApp does.
+  final MultiChatTypingWatcher _typingWatcher = MultiChatTypingWatcher(
+    maxChats: 40,
+  );
+  StreamSubscription<void>? _typingChanges;
+
   @override
   void initState() {
     super.initState();
@@ -99,6 +107,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _initializeData();
     _setupNotificationListener();
     _syncBadgeCount();
+    // Which chats are watched is decided in build; this only redraws the
+    // rows when one of them starts or stops.
+    _typingChanges = _typingWatcher.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -118,6 +131,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     _messageSubscription?.cancel();
+    _typingChanges?.cancel();
+    _typingWatcher.dispose();
     super.dispose();
   }
 
@@ -1010,7 +1025,58 @@ if (message.data['msg_type'] == '35') {
     ),
   );
 
+  // ─── Typing indicators ──────────────────────────────────────────────────────
+
+  /// Points the watcher at the conversations currently loaded. Cheap to call
+  /// on every build — chats already watched keep their listener.
+  ///
+  /// Groups go first because there are usually far fewer of them, so they
+  /// never lose their place to a long list of 1:1 chats at the ceiling.
+  void _syncTypingWatches() {
+    _typingWatcher.watchChats([
+      for (final group in _groups) group.groupId,
+      for (final contact in _contacts) contact.chatUuid,
+    ]);
+  }
+
+  /// What a row says instead of its last message while someone is writing in
+  /// it, or null when nobody is. Our own typing never counts — it would show
+  /// on our own row as we typed in the chat we just left.
+  String? _typingLabelFor(String chatId, {required bool isGroup}) {
+    final typers = _typingWatcher
+        .typersIn(chatId)
+        .where((t) => !t.matches(_currentUserUuid, FirebaseApiService.appType))
+        .toList();
+    if (typers.isEmpty) return null;
+    if (!isGroup) return 'typing…';
+
+    // Several at once are counted rather than named: a row is one line wide,
+    // and a string of names would be cut off before it said anything useful.
+    if (typers.length > 1) return '${typers.length} people typing…';
+
+    // Only the name the typist published is available out here — the list has
+    // no group roster to fall back on, so an unnamed typist goes unnamed.
+    final name = typers.first.userName.trim();
+    return name.isEmpty ? 'typing…' : '$name is typing…';
+  }
+
+  /// The line itself, in the chat green so it reads as live rather than as a
+  /// message somebody actually sent.
+  Widget _typingSubtitle(String label, FontSettings fontSettings) {
+    return Text(
+      label,
+      style: TextStyle(
+        color: ChatColors.primary,
+        fontSize: fontSettings.fontSize - 2,
+        fontWeight: FontWeight.w500,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
   Widget _buildContactCard(ChatContact contact, FontSettings fontSettings) {
+    final typingLabel = _typingLabelFor(contact.chatUuid, isGroup: false);
     final bool hasLastMessage =
         contact.lastMessage.isNotEmpty &&
         contact.lastMessage != 'No messages yet';
@@ -1099,7 +1165,11 @@ if (message.data['msg_type'] == '35') {
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (hasLastMessage) ...[
+              // Typing takes the row over from the message preview while it
+              // lasts, the way WhatsApp does it.
+              if (typingLabel != null)
+                _typingSubtitle(typingLabel, fontSettings)
+              else if (hasLastMessage) ...[
                 Text(
                   stripChatFormatting(contact.lastMessage),
                   style: TextStyle(
@@ -1268,6 +1338,7 @@ if (message.data['msg_type'] == '35') {
 
   Widget _buildGroupCard(ChatGroup group, FontSettings fontSettings) {
     final bool hasLastMessage = group.lastMessage.isNotEmpty;
+    final typingLabel = _typingLabelFor(group.groupId, isGroup: true);
     final int unreadCount = _unreadForGroup(group);
     // Unread messages in here name the user: the row gets the "@" marker,
     // which opens the conversation at the mention rather than at the end.
@@ -1323,17 +1394,20 @@ if (message.data['msg_type'] == '35') {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              hasLastMessage
-                  ? stripChatFormatting(group.lastMessage)
-                  : 'No messages yet',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: fontSettings.fontSize - 2,
+            if (typingLabel != null)
+              _typingSubtitle(typingLabel, fontSettings)
+            else
+              Text(
+                hasLastMessage
+                    ? stripChatFormatting(group.lastMessage)
+                    : 'No messages yet',
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: fontSettings.fontSize - 2,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
             Text(
               '${group.memberCount} member${group.memberCount == 1 ? '' : 's'}'
               '${group.adminOnlyMessaging ? ' • Admins only' : ''}',
@@ -1712,6 +1786,7 @@ if (message.data['msg_type'] == '35') {
   @override
   Widget build(BuildContext context) {
     final fontSettings = ref.watch(chatFontSettingsProvider);
+    _syncTypingWatches();
 
     return ChatFontScope(
       child: KeyedSubtree(

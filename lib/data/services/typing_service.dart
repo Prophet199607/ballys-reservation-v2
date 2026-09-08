@@ -141,6 +141,65 @@ class TypingService {
   }
 }
 
+/// Watches typing across every conversation in a list at once.
+///
+/// The chat list needs a listener per row, so this keeps one [TypingService]
+/// subscription per chat id and reuses it across rebuilds — only chats that
+/// come and go are subscribed and cancelled. [changes] fires whenever any of
+/// them changes, and the caller reads the current state with [typersIn].
+class MultiChatTypingWatcher {
+  MultiChatTypingWatcher({this.maxChats = 30});
+
+  /// Ceiling on live listeners. The list is sorted newest-first, so the rows
+  /// past this are ones nobody is looking at — and an account with hundreds of
+  /// conversations should not open hundreds of streams to animate them.
+  final int maxChats;
+
+  final Map<String, StreamSubscription<List<TypingUser>>> _subs = {};
+  final Map<String, List<TypingUser>> _typers = {};
+  final StreamController<void> _changes = StreamController<void>.broadcast();
+
+  /// Fires when any watched chat's set of typers changes.
+  Stream<void> get changes => _changes.stream;
+
+  /// Points the watcher at exactly these chats, in priority order. Safe to
+  /// call on every rebuild: chats already watched keep their subscription, so
+  /// an unchanged list does nothing at all.
+  void watchChats(Iterable<String> chatIds) {
+    final wanted = chatIds
+        .where((id) => id.isNotEmpty)
+        .take(maxChats)
+        .toSet();
+
+    for (final id in _subs.keys.toList()) {
+      if (wanted.contains(id)) continue;
+      _subs.remove(id)?.cancel();
+      _typers.remove(id);
+    }
+
+    for (final id in wanted) {
+      if (_subs.containsKey(id)) continue;
+      _subs[id] = TypingService.watch(id).listen((typers) {
+        _typers[id] = typers;
+        if (!_changes.isClosed) _changes.add(null);
+      }, onError: (_) {});
+    }
+  }
+
+  /// Who is typing in [chatId] right now — empty for a chat nobody is typing
+  /// in, and for one that is not being watched.
+  List<TypingUser> typersIn(String chatId) => _typers[chatId] ?? const [];
+
+  void dispose() {
+    for (final sub in _subs.values) {
+      sub.cancel();
+    }
+    _subs.clear();
+    _typers.clear();
+    _changes.close();
+  }
+}
+
 /// Debounces our own typing status for one chat.
 ///
 /// [keystroke] is safe to call on every character: it posts `true` at most
