@@ -664,7 +664,7 @@ class _IndividualChatScreenState extends ConsumerState<IndividualChatScreen>
 
   Future<void> _getCurrentUserName() async {
     try {
-      final userName = await StorageUtil.getUserName();
+      final userName = await StorageUtil.getChatUserName();
       final deviceId = await DeviceId.get();
       if (!mounted) return;
       setState(() {

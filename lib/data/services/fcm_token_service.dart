@@ -122,7 +122,7 @@ class FcmTokenService {
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool('is_logged_in') ?? false)) return;
 
-    final name = await StorageUtil.getUserName();
+    final name = await StorageUtil.getChatUserName();
     final salesCode = await StorageUtil.getSalesCode();
     if (name == null || name.isEmpty) return;
     if (salesCode == null || salesCode.isEmpty) return;

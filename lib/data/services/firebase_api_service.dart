@@ -205,8 +205,8 @@ class FirebaseApiService {
      
       final token = await _getToken();
       final deviceId = await DeviceId.get();
-      final senderName = await StorageUtil.getUserName() ?? '';
-
+      final senderName = await StorageUtil.getChatUserName() ?? '';
+print("Uploading files to chat $chatId with sender: $senderName and deviceId: $deviceId");
       final url =
           Uri.parse('$domain/api/chats/$chatId/upload/multiple');
 
@@ -287,7 +287,7 @@ class FirebaseApiService {
       final domain = await resolveDomain();
       final token = await _getToken();
       final deviceId = await DeviceId.get();
-      final senderName = await StorageUtil.getUserName() ?? '';
+      final senderName = await StorageUtil.getChatUserName() ?? '';
 
       final url = Uri.parse('$domain/api/chats/$chatId/voice');
 
@@ -654,8 +654,9 @@ class FirebaseApiService {
       final domain = await resolveDomain();
       final deviceId = await DeviceId.get();
       final senderName =
-          await StorageUtil.getUserName() ?? await getName() ?? '';
+          await StorageUtil.getChatUserName() ?? await getName() ?? '';
       final url = '$domain${endpoints['fetchMessages']}/$chatId/messages';
+      print("Sending chat message to $senderName with text: $text");
 print('sendChatMessage called with chatId: $chatId, text: $text, replyToMessageId: $replyToMessageId, mentionedUserIds: $mentionedUserIds');
       return await postRequest(url, {
         'senderId': deviceId,
@@ -1194,7 +1195,7 @@ static Future<Map<String, dynamic>> forwardMessage({
   try {
     final domain = await resolveDomain();
     final deviceId = await DeviceId.get();
-    final senderName = await StorageUtil.getUserName() ?? await getName() ?? '';
+    final senderName = await StorageUtil.getChatUserName() ?? await getName() ?? '';
     final url = '$domain/api/chats/$chatId/messages/$messageId/forward';
     final body = {
       'userId': deviceId,

@@ -99,6 +99,22 @@ class StorageUtil {
     return prefs.getString('uName');
   }
 
+  /// Name the chat backend knows this user by.
+  ///
+  /// Bellagio logins (API url on bty.world) are registered in chat under their
+  /// U_Name, so every chat payload — sync, sender name, typing — has to carry
+  /// that instead of the display name. Bally's and every other property keep
+  /// using the display name. Falls back to the display name when U_Name is
+  /// missing, since the login response does not always return it.
+  static Future<String?> getChatUserName() async {
+    final apiUrl = await getCurrentApiUrl() ?? '';
+    if (apiUrl.contains('bty.world')) {
+      final uName = await getUName();
+      if (uName != null && uName.isNotEmpty) return uName;
+    }
+    return getUserName();
+  }
+
   static Future<String?> getMobileNumber() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('mobileNumber');
