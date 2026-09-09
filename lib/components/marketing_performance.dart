@@ -25,6 +25,7 @@ class _MarketingPerformanceWidgetState
   AppMode? _previousAppMode;
   String? userName;
   bool _refreshEnabled = false;
+  String? _userLevel;
 
   // Client-side search over the currently displayed rows (SM name for the
   // Performance/Result views, group name for the Target view). Filtering is
@@ -63,12 +64,98 @@ class _MarketingPerformanceWidgetState
 
   Future<void> _loadUserName() async {
     final name = await StorageUtil.getUserName();
+    final userLevel = await StorageUtil.getUserLevel();
     if (mounted) {
       setState(() {
         userName = name;
+        _userLevel = userLevel;
       });
     }
   }
+
+  /// Level 3 users may read this card but not drill into any row - every
+  /// one of them shows Access Denied instead.
+  void _showAccessDeniedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.lock_outline,
+                    size: 50,
+                    color: Colors.red.shade400,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Access Denied",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2C3E50),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade400,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      "Got It",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
 
   void _handleAppModeChange(AppMode currentAppMode) {
     if (_previousAppMode != null &&
@@ -1087,6 +1174,10 @@ Widget _buildViewTypeButton(
       int rowNumber, MarketingTarget target, fontSettings) {
     return GestureDetector(
       onTap: () {
+        if (_userLevel == '3') {
+          _showAccessDeniedDialog();
+          return;
+        }
         final detailRows = ref
             .read(marketingProvider.notifier)
             .getTargetDetailForGroup(target.gcode);
@@ -1364,6 +1455,10 @@ String _formatWithThousands(double amount) {
   // ── Navigation ───────────────────────────────────────────────────────────
   void _navigateToMarketingDetail(
       String smCode, String smName, double winLost) {
+    if (_userLevel == '3') {
+      _showAccessDeniedDialog();
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1380,6 +1475,10 @@ String _formatWithThousands(double amount) {
 
   void _navigateToMarketingDetailFromResult(String smCode, String smName,
       double winLost, double mDrop, double cashOut) {
+    if (_userLevel == '3') {
+      _showAccessDeniedDialog();
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1433,6 +1532,10 @@ String _formatWithThousands(double amount) {
   //   }
   // }
 void _onTabSelected(int index) {
+  if (_userLevel == '3') {
+    _showAccessDeniedDialog();
+    return;
+  }
   final notifier = ref.read(marketingProvider.notifier);
   _clearSearch();
   notifier.setSelectedTab(index);

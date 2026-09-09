@@ -5,6 +5,7 @@ import 'package:ballys_reservation_app/providers/app_mode_setting_provider.dart'
 import 'package:ballys_reservation_app/providers/font_settings_provider.dart';
 import 'package:ballys_reservation_app/providers/last_three_months_provider.dart';
 import 'package:ballys_reservation_app/screens/last_three_months_detail_page.dart';
+import 'package:ballys_reservation_app/utils/storage_util.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -33,6 +34,7 @@ class LastThreeMonthsGuestCard extends ConsumerStatefulWidget {
 class _LastThreeMonthsGuestCardState
     extends ConsumerState<LastThreeMonthsGuestCard> {
   AppMode? _previousAppMode;
+  String? _userLevel;
 
   // Captured in initState so dispose() never touches `ref` (illegal in
   // Riverpod once the element is disposed).
@@ -53,6 +55,7 @@ class _LastThreeMonthsGuestCardState
   void initState() {
     super.initState();
     _lastThreeMonthsNotifier = ref.read(lastThreeMonthsProvider.notifier);
+    _loadUserLevel();
     // Intentionally no auto-fetch here. Data only loads when the user
     // taps "Load Data" (first time) or "Refresh" (afterwards) below.
   }
@@ -260,8 +263,15 @@ class _LastThreeMonthsGuestCardState
                   ),
                   onPressed: lastThreeMonthsState.isLoading
                       ? null
-                      : () =>
-                          ref.read(lastThreeMonthsProvider.notifier).getData(),
+                      : () {
+                          if (_userLevel == '3') {
+                            _showAccessDeniedDialog();
+                            return;
+                          }
+                          ref
+                              .read(lastThreeMonthsProvider.notifier)
+                              .getData();
+                        },
                 ),
                 IconButton(
                   icon: Icon(
@@ -332,9 +342,15 @@ class _LastThreeMonthsGuestCardState
                       ),
                       const SizedBox(height: 12),
                       ElevatedButton.icon(
-                        onPressed: () => ref
-                            .read(lastThreeMonthsProvider.notifier)
-                            .getData(),
+                        onPressed: () {
+                          if (_userLevel == '3') {
+                            _showAccessDeniedDialog();
+                            return;
+                          }
+                          ref
+                              .read(lastThreeMonthsProvider.notifier)
+                              .getData();
+                        },
                         icon: const Icon(Icons.cloud_download, size: 18),
                         label: const Text("Load Data"),
                         style: ElevatedButton.styleFrom(
@@ -625,7 +641,102 @@ class _LastThreeMonthsGuestCardState
   }
 
   // Mirrors MarketingPerformanceWidget._navigateToMarketingDetail.
+  Future<void> _loadUserLevel() async {
+    final userLevel = await StorageUtil.getUserLevel();
+    if (!mounted) return;
+    setState(() {
+      _userLevel = userLevel;
+    });
+  }
+
+  /// Level 3 users may read this card but not drill into any row - every
+  /// one of them shows Access Denied instead.
+  void _showAccessDeniedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.lock_outline,
+                    size: 50,
+                    color: Colors.red.shade400,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Access Denied",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2C3E50),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade400,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      "Got It",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _navigateToDetail(LastThreeMonthsPerformance performance) {
+    if (_userLevel == '3') {
+      _showAccessDeniedDialog();
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(

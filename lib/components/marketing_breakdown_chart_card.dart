@@ -347,6 +347,10 @@ class _HalfPieSectionState extends State<_HalfPieSection>
   String? _userSalesCode;
   bool _isBellagio = false;
 
+  // Level 3 users may read the Visit Summary chart but not drill into any of
+  // its legend rows - every one of them shows Access Denied instead.
+  String? _userLevel;
+
   @override
   void initState() {
     super.initState();
@@ -361,10 +365,12 @@ class _HalfPieSectionState extends State<_HalfPieSection>
   Future<void> _loadAccessSettings() async {
     final userSalesCode = await StorageUtil.getSalesCode();
     final apiUrl = await StorageUtil.getCurrentApiUrl() ?? '';
+    final userLevel = await StorageUtil.getUserLevel();
     if (!mounted) return;
     setState(() {
       _userSalesCode = userSalesCode;
       _isBellagio = apiUrl.contains('bty.world');
+      _userLevel = userLevel;
     });
   }
 
@@ -383,6 +389,11 @@ class _HalfPieSectionState extends State<_HalfPieSection>
   }
 
   void _showSheet(BuildContext context, MarketingGroup group, Color color) {
+    if (_userLevel == '3') {
+      showAccessDeniedDialog(context);
+      return;
+    }
+
     final gCode = group.gCode;
     final label = widget.periodLabel;
 
