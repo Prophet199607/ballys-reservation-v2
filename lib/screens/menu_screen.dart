@@ -19,6 +19,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     with SingleTickerProviderStateMixin,ConnectivityMixin {
   late AnimationController _controller;
   String? _salesCode;
+  String? _userLevel;
   bool _isLoading = true;
 
   @override
@@ -38,13 +39,101 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
   Future<void> _loadSalesCode() async {
     final salesCode = await StorageUtil.getSalesCode();
+    final userLevel = await StorageUtil.getUserLevel();
+    if (!mounted) return;
     setState(() {
       _salesCode = salesCode;
+      _userLevel = userLevel;
       _isLoading = false;
     });
   }
 
   bool get _isReservationsBlocked => _salesCode == "CD001";
+
+  /// Level 3 users can open the menu but not the Approve / Birthdays /
+  /// Members sections - tapping those shows the Access Denied dialog.
+  bool get _isLevelThree => _userLevel == '3';
+
+  void _showAccessDeniedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.lock_outline,
+                    size: 50,
+                    color: Colors.red.shade400,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Access Denied",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2C3E50),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade400,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      "Got It",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   void dispose() {
@@ -201,6 +290,10 @@ centerTitle: true,
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
+                             if (_isLevelThree) {
+                                _showAccessDeniedDialog();
+                                return;
+                              }
                           context.go('/aireticketscreen');
                         },
                         // child: const Card(
@@ -257,6 +350,10 @@ centerTitle: true,
                         children: [
                           GestureDetector(
                             onTap: () {
+                              if (_isLevelThree) {
+                                _showAccessDeniedDialog();
+                                return;
+                              }
                               context.go('/menu/approve-reject');
                             },
                             child: Card(
@@ -327,6 +424,10 @@ centerTitle: true,
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
+                          if (_isLevelThree) {
+                            _showAccessDeniedDialog();
+                            return;
+                          }
                           context.go('/birthdays');
                         },
                         // child: const Card(
@@ -377,6 +478,10 @@ centerTitle: true,
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
+                             if (_isLevelThree) {
+                                _showAccessDeniedDialog();
+                                return;
+                              }
                           context.go('/inctiveMemberMain');
                         },
                         // child: const Card(
@@ -435,6 +540,10 @@ centerTitle: true,
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
+                          if (_isLevelThree) {
+                            _showAccessDeniedDialog();
+                            return;
+                          }
                           context.go('/memberMain');
                         },
                         // child: const Card(
@@ -489,6 +598,10 @@ centerTitle: true,
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
+                             if (_isLevelThree) {
+                                _showAccessDeniedDialog();
+                                return;
+                              }
                           context.go('/gifts');
                         },
                         // child: const Card(
@@ -547,6 +660,10 @@ centerTitle: true,
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
+                             if (_isLevelThree) {
+                                _showAccessDeniedDialog();
+                                return;
+                              }
                           context.go('/daily-gests');
                         },
                         // child: const Card(
@@ -696,6 +813,10 @@ centerTitle: true,
                           // ),
                            GestureDetector(
                             onTap: () {
+                                 if (_isLevelThree) {
+                                _showAccessDeniedDialog();
+                                return;
+                              }
                              context.push('/guest-bookings');
                             },
                             child: Card(

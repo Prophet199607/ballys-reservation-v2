@@ -487,6 +487,89 @@ Future<void> _fetchAndUpdateCount(
     );
   }
 
+  /// Level 3 users can see the counts but not drill into the guest lists -
+  /// tapping a count box shows the same Access Denied dialog used elsewhere.
+  void _showAccessDeniedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.lock_outline,
+                    size: 50,
+                    color: Colors.red.shade400,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  "Access Denied",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2C3E50),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade400,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      "Got It",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget buildCountBox({
     required int? count,
     required String label,
@@ -779,6 +862,11 @@ Future<void> _fetchAndUpdateCount(
                         child: GestureDetector(
                           onTap: () async {
                             final userLevel = await StorageUtil.getUserLevel();
+                            if (!mounted) return;
+                            if (userLevel == '3') {
+                              _showAccessDeniedDialog();
+                              return;
+                            }
                             if (userLevel == '1') {
                               context.push(
                                 '/home/sales-persons',
@@ -811,6 +899,11 @@ Future<void> _fetchAndUpdateCount(
                         child: GestureDetector(
                           onTap: () async {
                             final userLevel = await StorageUtil.getUserLevel();
+                            if (!mounted) return;
+                            if (userLevel == '3') {
+                              _showAccessDeniedDialog();
+                              return;
+                            }
                             if (userLevel == '1') {
                               context.push(
                                 '/home/sales-persons',
@@ -850,6 +943,11 @@ Future<void> _fetchAndUpdateCount(
                         child: GestureDetector(
                           onTap: () async {
                             final userLevel = await StorageUtil.getUserLevel();
+                            if (!mounted) return;
+                            if (userLevel == '3') {
+                              _showAccessDeniedDialog();
+                              return;
+                            }
                             if (userLevel == '1') {
                               context.push(
                                 '/home/sales-persons',
