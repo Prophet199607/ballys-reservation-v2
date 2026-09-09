@@ -86,11 +86,17 @@ required String coordinatorId,
     final response = await apiService.post(_endpoint, body);
     log?.call('Coordinator request response', response);
 
-    final success = response['Status'] as bool? ?? false;
+    // The insert endpoint answers in the same lowercase shape as
+    // `Coordinators/Get` — `{success, message, master_id}` — while the older
+    // `Reservation_*` endpoints answer with `Status`/`Message`, so both are
+    // read here.
+    final success =
+        (response['success'] ?? response['Status']) as bool? ?? false;
+    final message = (response['message'] ?? response['Message']) as String?;
     return CoordinatorRequestResult(
       success: success,
-      message: response['Message'] as String? ??
-          (success ? null : 'Failed to send the coordinator request'),
+      message:
+          message ?? (success ? null : 'Failed to send the coordinator request'),
     );
   }
 
