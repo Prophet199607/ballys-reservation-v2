@@ -65,6 +65,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String _searchQuery = '';
   bool _isLoading = false;
   bool _isLoadingGroups = false;
+
+  /// False until the groups API has answered once. The chats API also returns
+  /// a row per group, carrying no group name — those rows are only recognised
+  /// (and dropped) once [_groupIds] is filled, so the All/Unread lists stay on
+  /// their loading state until then instead of briefly drawing a group as one
+  /// of its participants.
+  bool _hasLoadedGroups = false;
   String? _groupsErrorMessage;
   String? _errorMessage;
   String? _currentUserName;
@@ -287,6 +294,7 @@ if (message.data['msg_type'] == '35') {
         _groupIds = {
           for (final g in parsed) ...[g.groupId, g.id],
         }..removeWhere((id) => id.isEmpty);
+        _hasLoadedGroups = true;
       });
     } catch (e) {
       // Silent refresh: ignore errors, next manual refresh will retry.
@@ -295,8 +303,9 @@ if (message.data['msg_type'] == '35') {
 
   Future<void> _initializeData() async {
     await _getName();
-    await _fetchChatsFromApi();
-    await _fetchGroups();
+    // Both together: the chat rows can't be filtered until the groups are in,
+    // so there is nothing to gain from fetching them one after the other.
+    await _refreshChatsAndGroups();
     _checkAndOpenNotificationChat();
     // Sync badge after fetching chats
     await _syncBadgeCount();
@@ -709,6 +718,7 @@ if (message.data['msg_type'] == '35') {
           for (final g in parsed) ...[g.groupId, g.id],
         }..removeWhere((id) => id.isEmpty);
         _isLoadingGroups = false;
+        _hasLoadedGroups = true;
       });
       unawaited(_refreshGroupMentions());
     } catch (e) {
@@ -716,6 +726,9 @@ if (message.data['msg_type'] == '35') {
       setState(() {
         _groupsErrorMessage = e.toString();
         _isLoadingGroups = false;
+        // A failed fetch still releases the chat list — otherwise it would sit
+        // on its spinner for as long as the groups API stays down.
+        _hasLoadedGroups = true;
       });
     }
   }
@@ -1678,7 +1691,9 @@ if (message.data['msg_type'] == '35') {
   }
 
   Widget _buildChatList(int tabIndex, FontSettings fontSettings) {
-    if (_isLoading) {
+    // Rows can only be sorted into chats and groups once the groups are known,
+    // so the first load waits for both.
+    if (_isLoading || !_hasLoadedGroups) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

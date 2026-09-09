@@ -207,6 +207,7 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
             DropdownMenuItem(value: 'By Hamoos ', child: Text('By Hamoos')),
             DropdownMenuItem(
                 value: 'By Guest & Hamoos', child: Text('By Guest & Hamoos')),
+            DropdownMenuItem(value: 'Recovery from Cashier ', child: Text('Recovery from Cashier')),
           ];
   }
 
