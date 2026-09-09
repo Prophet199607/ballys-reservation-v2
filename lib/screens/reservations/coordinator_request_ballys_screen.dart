@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ballys_reservation_app/components/bottom_sheets/member_search-new_sheet.dart';
 import 'package:ballys_reservation_app/core/constants.dart';
+import 'package:ballys_reservation_app/data/repositories/coordinator_request_repository.dart';
 import 'package:ballys_reservation_app/data/repositories/guest_repository.dart';
 import 'package:ballys_reservation_app/data/services/api_service.dart';
 import 'package:ballys_reservation_app/models/guest_search_response.dart';
@@ -27,6 +28,13 @@ extension CoordinatorRequestTypeX on CoordinatorRequestType {
         CoordinatorRequestType.airTicket => Icons.flight,
         CoordinatorRequestType.hotel => Icons.hotel,
         CoordinatorRequestType.both => Icons.all_inclusive,
+      };
+
+  /// What goes on the wire — the label is for the screen only.
+  String get code => switch (this) {
+        CoordinatorRequestType.airTicket => 'AIR_TICKET',
+        CoordinatorRequestType.hotel => 'HOTEL',
+        CoordinatorRequestType.both => 'BOTH',
       };
 }
 
@@ -314,21 +322,34 @@ class _CoordinatorRequestBallysScreenState
     }
 
     setState(() => _isSaving = true);
-    // TODO: post the request once the endpoint is available. Until then the
-    // form only confirms what was captured.
     final coordinator = _selectedCoordinator!;
-    final guestList =
-        _guests.map((g) => '${g.mid} (${g.name})').join(', ');
-    debugPrint(
-      'Coordinator request → coordinator: ${coordinator.id} '
-      '(${coordinator.name}), type: ${_requestType!.label}, '
-      'guests: [$guestList], '
-      'remarks: ${_remarksController.text.trim()}',
-    );
-    if (!mounted) return;
-    setState(() => _isSaving = false);
-    _showMessage('Request sent to ${coordinator.name}');
-    _resetForm();
+    try {
+      final result =
+          await CoordinatorRequestRepository(ApiService(SecureStorage.instance))
+              .saveCoordinatorRequest(
+        coordinatorId: coordinator.id,
+        coordinatorName: coordinator.name,
+        requestType: _requestType!.code,
+        guests: _guests
+            .map((g) => CoordinatorRequestGuest(bmNumber: g.mid, name: g.name))
+            .toList(),
+        remarks: _remarksController.text.trim(),
+        log: (label, payload) => debugPrint('$label: $payload'),
+      );
+
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+
+      _showMessage(
+        result.message ?? 'Request sent to ${coordinator.name}',
+        isError: !result.success,
+      );
+      if (result.success) _resetForm();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _showMessage('Failed to send the coordinator request: $e', isError: true);
+    }
   }
 
   void _resetForm() {
