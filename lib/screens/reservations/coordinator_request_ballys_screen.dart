@@ -5,7 +5,9 @@ import 'package:ballys_reservation_app/core/constants.dart';
 import 'package:ballys_reservation_app/data/repositories/coordinator_request_repository.dart';
 import 'package:ballys_reservation_app/data/repositories/guest_repository.dart';
 import 'package:ballys_reservation_app/data/services/api_service.dart';
+import 'package:ballys_reservation_app/models/coordinator.dart';
 import 'package:ballys_reservation_app/models/guest_search_response.dart';
+import 'package:ballys_reservation_app/providers/coordinators_provider.dart';
 import 'package:ballys_reservation_app/providers/font_settings_provider.dart';
 import 'package:ballys_reservation_app/utils/connectivity_mixin.dart';
 import 'package:ballys_reservation_app/utils/secure_storage.dart';
@@ -36,15 +38,6 @@ extension CoordinatorRequestTypeX on CoordinatorRequestType {
         CoordinatorRequestType.hotel => 'HOTEL',
         CoordinatorRequestType.both => 'BOTH',
       };
-}
-
-/// A coordinator on the picker. Only [name] is shown; [id] is what the request
-/// will be saved against once the backend exists.
-class CoordinatorOption {
-  const CoordinatorOption({required this.id, required this.name});
-
-  final String id;
-  final String name;
 }
 
 /// A guest the coordinator is being asked to book for. Only [mid] and [name]
@@ -82,14 +75,11 @@ class _CoordinatorRequestBallysScreenState
     with ConnectivityMixin {
   final _formKey = GlobalKey<FormState>();
 
-  /// TODO: replace with the coordinator list from the API. Hard-coded for now
-  /// so the form can be used before that endpoint exists.
-  static const List<CoordinatorOption> _coordinators = [
-    CoordinatorOption(id: '1', name: 'Coordinator One'),
-    CoordinatorOption(id: '2', name: 'Coordinator Two'),
-  ];
+  /// The picked coordinator, held as its `coordinator_id` rather than the
+  /// object: [coordinatorsProvider] hands out fresh instances on every refetch,
+  /// and a dropdown whose value is not in its own items asserts.
+  String? _selectedCoordinatorId;
 
-  CoordinatorOption? _selectedCoordinator;
   CoordinatorRequestType? _requestType;
 
   /// The guests the request is for. A coordinator request can cover a party,
@@ -139,6 +129,21 @@ class _CoordinatorRequestBallysScreenState
       _prefixes = isNumeric ? const [] : const ["BM", "BL", "BN"];
       _selectedPrefix = isNumeric ? "" : "BM";
     });
+  }
+
+  // ── Coordinators ───────────────────────────────────────────────────
+
+  /// The loaded list, or empty while it is still loading or has failed.
+  List<Coordinator> get _coordinators =>
+      ref.read(coordinatorsProvider).valueOrNull ?? const [];
+
+  Coordinator? get _selectedCoordinator {
+    final id = _selectedCoordinatorId;
+    if (id == null) return null;
+    for (final c in _coordinators) {
+      if (c.coordinatorId == id) return c;
+    }
+    return null;
   }
 
   // ── Guests ─────────────────────────────────────────────────────────
@@ -308,7 +313,8 @@ class _CoordinatorRequestBallysScreenState
 
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    if (_selectedCoordinator == null) {
+    final coordinator = _selectedCoordinator;
+    if (coordinator == null) {
       _showMessage('Select a coordinator', isError: true);
       return;
     }
@@ -322,12 +328,11 @@ class _CoordinatorRequestBallysScreenState
     }
 
     setState(() => _isSaving = true);
-    final coordinator = _selectedCoordinator!;
     try {
-      final result =
-          await CoordinatorRequestRepository(ApiService(SecureStorage.instance))
-              .saveCoordinatorRequest(
-        coordinatorId: coordinator.id,
+      final result = await ref
+          .read(coordinatorRequestRepositoryProvider)
+          .saveCoordinatorRequest(
+        coordinatorId: coordinator.coordinatorId,
         coordinatorName: coordinator.name,
         requestType: _requestType!.code,
         guests: _guests
@@ -354,7 +359,7 @@ class _CoordinatorRequestBallysScreenState
 
   void _resetForm() {
     setState(() {
-      _selectedCoordinator = null;
+      _selectedCoordinatorId = null;
       _requestType = null;
       _guests.clear();
       _clearGuestFields();
@@ -376,6 +381,17 @@ class _CoordinatorRequestBallysScreenState
   @override
   Widget build(BuildContext context) {
     final fontSettings = ref.watch(fontSettingsProvider);
+    final coordinatorsAsync = ref.watch(coordinatorsProvider);
+
+    // A refetch can drop the coordinator that was picked — clear the selection
+    // rather than leave the form pointing at someone no longer on the list.
+    ref.listen(coordinatorsProvider, (_, next) {
+      final list = next.valueOrNull;
+      if (list == null || _selectedCoordinatorId == null) return;
+      if (!list.any((c) => c.coordinatorId == _selectedCoordinatorId)) {
+        setState(() => _selectedCoordinatorId = null);
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -404,7 +420,7 @@ class _CoordinatorRequestBallysScreenState
                   const SizedBox(height: 20),
                   _sectionTitle('Coordinator'),
                   const SizedBox(height: 10),
-                  _coordinatorField(fontSettings),
+                  _coordinatorField(fontSettings, coordinatorsAsync),
                   const SizedBox(height: 20),
                   _sectionTitle('Guests'),
                   const SizedBox(height: 4),
@@ -489,42 +505,114 @@ class _CoordinatorRequestBallysScreenState
   /// An InputDecorator wrapping a plain DropdownButton rather than a
   /// DropdownButtonFormField: the field is fully controlled, so clearing it on
   /// reset actually empties it — the FormField's initialValue would not.
-  Widget _coordinatorField(FontSettings fontSettings) {
-    return InputDecorator(
-      isEmpty: _selectedCoordinator == null,
-      decoration: InputDecoration(
-        labelText: 'Select Coordinator *',
-        labelStyle: TextStyle(
-          fontSize: fontSettings.fontSize,
-          fontWeight: fontSettings.fontWeight,
-        ),
-        border: const OutlineInputBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-        prefixIcon: const Icon(Icons.person_outline),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<CoordinatorOption>(
-          value: _selectedCoordinator,
-          isExpanded: true,
-          style: TextStyle(
-            fontSize: fontSettings.fontSize,
-            fontWeight: fontSettings.fontWeight,
-            color: Colors.black,
+  ///
+  /// The three states of [coordinatorsProvider] land here: loading shows a
+  /// spinner in the suffix, an error swaps it for a retry that invalidates the
+  /// provider, and data fills the dropdown.
+  Widget _coordinatorField(
+    FontSettings fontSettings,
+    AsyncValue<List<Coordinator>> coordinatorsAsync,
+  ) {
+    final coordinators = coordinatorsAsync.valueOrNull ?? const <Coordinator>[];
+    final isLoading = coordinatorsAsync.isLoading;
+    final failed = coordinatorsAsync.hasError && !isLoading;
+    final isEmpty = !isLoading && !failed && coordinators.isEmpty;
+    final hasError = failed || isEmpty;
+
+    final hint = isLoading
+        ? 'Loading coordinators...'
+        : failed
+            ? 'Could not load coordinators'
+            : isEmpty
+                ? ''
+                : '';
+
+    final selected = _selectedCoordinator;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InputDecorator(
+          isEmpty: selected == null,
+          decoration: InputDecoration(
+            labelText: 'Select Coordinator *',
+            labelStyle: TextStyle(
+              fontSize: fontSettings.fontSize,
+              fontWeight: fontSettings.fontWeight,
+            ),
+            border: const OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            prefixIcon: const Icon(Icons.person_outline),
+            suffixIcon: isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : hasError
+                    ? IconButton(
+                        tooltip: 'Retry',
+                        icon: const Icon(Icons.refresh, color: Colors.red),
+                        onPressed: () => ref.invalidate(coordinatorsProvider),
+                      )
+                    : null,
           ),
-          items: _coordinators
-              .map(
-                (c) => DropdownMenuItem<CoordinatorOption>(
-                  value: c,
-                  child: Text(c.name, overflow: TextOverflow.ellipsis),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: selected?.coordinatorId,
+              isExpanded: true,
+              hint: Text(
+                hint,
+                style: TextStyle(
+                  fontSize: fontSettings.fontSize - 2,
+                  color: hasError ? Colors.red : Colors.grey.shade600,
                 ),
-              )
-              .toList(),
-          onChanged: (value) => setState(() => _selectedCoordinator = value),
+              ),
+              style: TextStyle(
+                fontSize: fontSettings.fontSize,
+                fontWeight: fontSettings.fontWeight,
+                color: Colors.black,
+              ),
+              items: coordinators
+                  .map(
+                    (c) => DropdownMenuItem<String>(
+                      value: c.coordinatorId,
+                      child: Text(c.name, overflow: TextOverflow.ellipsis),
+                    ),
+                  )
+                  .toList(),
+              onChanged: coordinators.isEmpty
+                  ? null
+                  : (value) => setState(() => _selectedCoordinatorId = value),
+            ),
+          ),
         ),
-      ),
+        // The contact number is not asked for, but it is what an executive
+        // needs to chase the request up, so it is shown once one is picked.
+        if (selected != null && selected.contactNumber.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 4),
+            child: Row(
+              children: [
+                Icon(Icons.phone, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 6),
+                Text(
+                  selected.contactNumber,
+                  style: TextStyle(
+                    fontSize: fontSettings.fontSize - 5,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 

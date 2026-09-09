@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ballys_reservation_app/data/services/api_service.dart';
+import 'package:ballys_reservation_app/models/coordinator.dart';
 import 'package:ballys_reservation_app/utils/device_id.dart';
 import 'package:ballys_reservation_app/utils/storage_util.dart';
 
@@ -36,7 +37,34 @@ class CoordinatorRequestRepository {
   /// Confirm the exact name with the backend before shipping — the payload
   /// shape below mirrors `Reservation_InsertGroupReservation`, so only this
   /// constant should need changing.
-  static const String _endpoint = 'Reservation_InsertCoordinatorRequest';
+  static const String _endpoint = 'CoordinatorRequest/Insert';
+
+  /// Resolved against the current CRM base URL — i.e.
+  /// `https://api.ballyscolombo.com/api/Ballys/CRM/Coordinators/Get`.
+  static const String _coordinatorsEndpoint = 'Coordinators/Get';
+
+  /// GET `{baseUrl}/Coordinators/Get` — the coordinator picker list.
+  ///
+  /// The response is `{ success, count, coordinators: [...] }`. Inactive rows
+  /// are dropped here so the screen never offers one, and the list is sorted
+  /// by name because the API's order is not guaranteed.
+  Future<List<Coordinator>> getCoordinators() async {
+    final response = await apiService.get(_coordinatorsEndpoint);
+
+    if (response['success'] != true) return [];
+
+    final data = response['coordinators'];
+    if (data is! List) return [];
+
+    final coordinators = data
+        .whereType<Map>()
+        .map((item) => Coordinator.fromJson(Map<String, dynamic>.from(item)))
+        .where((c) => c.isActive && c.name.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
+    return coordinators;
+  }
 
   Future<CoordinatorRequestResult> saveCoordinatorRequest({
 required String coordinatorId,
