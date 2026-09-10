@@ -2,6 +2,9 @@ import 'package:ballys_reservation_app/core/constants.dart';
 import 'package:ballys_reservation_app/models/coordinator_request.dart';
 import 'package:ballys_reservation_app/providers/coordinators_provider.dart';
 import 'package:ballys_reservation_app/providers/font_settings_provider.dart';
+import 'package:ballys_reservation_app/providers/selected_flight_provider_ballys.dart';
+import 'package:ballys_reservation_app/providers/selected_hotel_provider_ballys.dart';
+import 'package:ballys_reservation_app/providers/selectedReservationforBallys_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -127,7 +130,10 @@ class _CoordinatorRequestsScreenState
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: Colors.grey.shade300),
       ),
-      child: Padding(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _openReservationForRequest(r),
+        child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -257,6 +263,24 @@ class _CoordinatorRequestsScreenState
           ],
         ),
       ),
+      ),
+    );
+  }
+
+  /// Opens the Ballys reservation form with this request's guests already in
+  /// it. Everything selected by a previously-viewed reservation is cleared
+  /// first, or the form would come up in Update mode with that reservation's
+  /// hotels and air tickets still picked.
+  Future<void> _openReservationForRequest(CoordinatorRequestRecord r) async {
+    ref
+        .read(selectedReservationBallysProvider.notifier)
+        .clearSelectedBallysReservation();
+    ref.read(selectedHotelBallysProvider.notifier).setHotels([]);
+    ref.read(selectedFlightBallysProvider.notifier).setFlights([]);
+
+    await context.push(
+      '/reservationMain/reservations/new-reservation-ballys',
+      extra: r,
     );
   }
 

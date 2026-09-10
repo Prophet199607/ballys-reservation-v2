@@ -27,6 +27,18 @@ class NewReservationBallys {
   bool isSharedAmount;
   String? selectedMarketingPerson;
 
+  /// Sales code of the marketing person named in [selectedMarketingPerson].
+  /// Set when the reservation is keyed in off a coordinator request: the
+  /// request carries who raised it, and the reservation has to credit them
+  /// rather than the coordinator typing it.
+  String? selectedMarketingPersonCode;
+
+  /// Sent as `sales_code` instead of the logged-in user's own, again only on
+  /// the coordinator-request path — there it carries the coordinator's id.
+  /// Null on the normal path, where the repository uses the sales code in
+  /// storage.
+  String? salesCodeOverride;
+
   /// The approver this reservation is being sent to, picked from
   /// `GetAuthorizationLevels`. Null when the user left the dropdown empty.
   int? authorizationId;
@@ -55,6 +67,8 @@ class NewReservationBallys {
     this.contactPerson,
     this.isSharedAmount = false,
     this.selectedMarketingPerson,
+    this.selectedMarketingPersonCode,
+    this.salesCodeOverride,
     this.authorizationId,
     this.authorizationPerson,
     this.authorizationLevelNo,
@@ -82,6 +96,7 @@ class NewReservationBallys {
       'contact_person': contactPerson,
       'is_shared_amount': isSharedAmount,
       'selected_marketing_person': selectedMarketingPerson,
+      'selected_marketing_person_code': selectedMarketingPersonCode,
       'approve_person': approvePersonJson(),
       'guests': guests,
       'passport_images': passportImages,

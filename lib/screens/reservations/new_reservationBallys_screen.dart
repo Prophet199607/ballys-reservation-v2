@@ -40,6 +40,7 @@ import 'package:ballys_reservation_app/providers/selected_hotel_provider_ballys.
 import 'package:ballys_reservation_app/providers/selected_passport_provider_ballys.dart';
 // import 'package:ballys_reservation_app/providers/selected_passport_provider.dart';
 // import 'package:ballys_reservation_app/providers/selected_reservation_provider.dart';
+import 'package:ballys_reservation_app/models/coordinator_request.dart';
 import 'package:ballys_reservation_app/utils/connectivity_mixin.dart';
 import 'package:ballys_reservation_app/utils/storage_util.dart';
 import 'package:dropdown_search/dropdown_search.dart';
@@ -52,7 +53,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:ballys_reservation_app/utils/secure_storage.dart';
 
 class NewReservationBallysScreen extends ConsumerStatefulWidget {
-  const NewReservationBallysScreen({super.key});
+  const NewReservationBallysScreen({super.key, this.coordinatorRequest});
+
+  /// Set when the screen is opened from a card on "My Coordinator Requests":
+  /// the coordinator is keying in the reservation somebody else asked for.
+  /// Its guests fill the form and cannot be searched or swapped, and the save
+  /// credits the requester instead of the coordinator.
+  final CoordinatorRequestRecord? coordinatorRequest;
 
   @override
   ConsumerState<NewReservationBallysScreen> createState() =>
@@ -157,8 +164,51 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
         _isEditMode = true;
         _populateFields(selectedReservation);
         _loadGuestEntriesForEdit(selectedReservation);
+      } else if (widget.coordinatorRequest != null) {
+        _applyCoordinatorRequest(widget.coordinatorRequest!);
       }
     });
+  }
+
+  /// True while the form is keying in a reservation off a coordinator request.
+  /// The guests come from the request, so every member picker on the form is
+  /// read-only.
+  bool get _isFromCoordinatorRequest => widget.coordinatorRequest != null;
+
+  /// Fills the form with the guests the request names.
+  ///
+  /// The first guest goes into the main Member ID / Member Name pair; the rest
+  /// become "same package" rows, since one request is one trip — they share the
+  /// hotel, air tickets and dates the coordinator is about to pick, each with
+  /// their own package amount. None of them can be searched or removed.
+  void _applyCoordinatorRequest(CoordinatorRequestRecord request) {
+    final guests = request.guests
+        .where((g) => g.bmNumber.trim().isNotEmpty || g.guestName.trim().isNotEmpty)
+        .toList();
+    if (guests.isEmpty) return;
+
+    final first = guests.first;
+    _updateMemberIdFields(first.bmNumber.trim());
+    setState(() {
+      _isGuestLoading = true;
+      _memberNameController.text = first.guestName.trim();
+      _loadExtraMembers(
+        guests
+            .skip(1)
+            .map((g) => AccompanyingMember(
+                  mid: g.bmNumber.trim(),
+                  guestName: g.guestName.trim(),
+                ))
+            .toList(),
+      );
+    });
+
+    ref
+        .read(newReservationBallysProvider.notifier)
+        .updateMemberInfo(first.bmNumber.trim(), first.guestName.trim());
+
+    // Feeds the guest card above the form (rating / last visit / photo).
+    _loadGuestProfile(first.bmNumber.trim(), first.guestName.trim());
   }
 
   Future<void> _loadLocationPrefix() async {
@@ -207,7 +257,7 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
             DropdownMenuItem(value: 'By Hamoos ', child: Text('By Hamoos')),
             DropdownMenuItem(
                 value: 'By Guest & Hamoos', child: Text('By Guest & Hamoos')),
-            DropdownMenuItem(value: 'Recovery from Cashier ', child: Text('Recovery from Cashier')),
+            //DropdownMenuItem(value: 'Recovery from Cashier ', child: Text('Recovery from Cashier')),
           ];
   }
 
@@ -1651,6 +1701,12 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
       paymentBy: _paymentBy ?? '',
       contactPerson: _selectedContactPerson ?? '',
       isSharedAmount: _sharedPackage,
+      // Keyed in off a coordinator request: the reservation is credited to the
+      // marketing person who raised it, while `sales_code` carries the id of
+      // the coordinator who was asked to do it.
+      selectedMarketingPerson: widget.coordinatorRequest?.userName,
+      selectedMarketingPersonCode: widget.coordinatorRequest?.salesCode,
+      salesCodeOverride: widget.coordinatorRequest?.coordinatorId,
       authorizationId: _selectedAuthorization?.idNo,
       authorizationPerson: _selectedAuthorization?.name,
       authorizationLevelNo: _selectedAuthorization?.levelNo,
@@ -1905,12 +1961,15 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.red),
-                  onPressed: () => _removeExtraMember(index),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
+                // A guest that came off the coordinator request cannot be
+                // dropped from the reservation here.
+                if (!_isFromCoordinatorRequest)
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.red),
+                    onPressed: () => _removeExtraMember(index),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
               ],
             ),
             const SizedBox(height: 10),
@@ -1956,16 +2015,21 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                                       child: Text(prefix),
                                     ))
                                 .toList(),
-                            onChanged: (value) =>
-                                setState(() => row.prefix = value!),
+                            onChanged: _isFromCoordinatorRequest
+                                ? null
+                                : (value) =>
+                                    setState(() => row.prefix = value!),
                           ),
                         ),
                       ),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: () => _openExtraMemberSearch(index, 8002),
-                ),
+                suffixIcon: _isFromCoordinatorRequest
+                    ? const Icon(Icons.lock_outline)
+                    : IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: () => _openExtraMemberSearch(index, 8002),
+                      ),
               ),
+              readOnly: _isFromCoordinatorRequest,
               onChanged: (_) => setState(() => row.nameController.clear()),
             ),
             const SizedBox(height: 10),
@@ -1990,11 +2054,14 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                   horizontal: 12.0,
                   vertical: -5.0,
                 ),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: () => _openExtraMemberSearch(index, 8003),
-                ),
+                suffixIcon: _isFromCoordinatorRequest
+                    ? const Icon(Icons.lock_outline)
+                    : IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: () => _openExtraMemberSearch(index, 8003),
+                      ),
               ),
+              readOnly: _isFromCoordinatorRequest,
             ),
             const SizedBox(height: 10),
 
@@ -2497,28 +2564,39 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                                                         ),
                                                       );
                                                     }).toList(),
-                                                    onChanged: (value) {
-                                                      setState(() =>
-                                                          _selectedPrefix =
-                                                              value!);
-                                                    },
+                                                    onChanged:
+                                                        _isFromCoordinatorRequest
+                                                            ? null
+                                                            : (value) {
+                                                                setState(() =>
+                                                                    _selectedPrefix =
+                                                                        value!);
+                                                              },
                                                   ),
                                                 ),
                                               ),
-                                        suffixIcon: IconButton(
-                                          icon: const Icon(Icons.search),
-                                          onPressed: () {
-                                            FocusScope.of(context).unfocus();
-                                            _memberIdController.text =
-                                                _isNumericOnlyLocation
-                                                    ? _memberIdNumberController
-                                                        .text
-                                                    : '$_selectedPrefix${_memberIdNumberController.text}';
-                                            _openMemberSearchBottomSheet(
-                                                8002);
-                                          },
-                                        ),
+                                        // The guests come from the
+                                        // coordinator request, so there is
+                                        // nobody to search for.
+                                        suffixIcon: _isFromCoordinatorRequest
+                                            ? const Icon(Icons.lock_outline)
+                                            : IconButton(
+                                                icon:
+                                                    const Icon(Icons.search),
+                                                onPressed: () {
+                                                  FocusScope.of(context)
+                                                      .unfocus();
+                                                  _memberIdController.text =
+                                                      _isNumericOnlyLocation
+                                                          ? _memberIdNumberController
+                                                              .text
+                                                          : '$_selectedPrefix${_memberIdNumberController.text}';
+                                                  _openMemberSearchBottomSheet(
+                                                      8002);
+                                                },
+                                              ),
                                       ),
+                                      readOnly: _isFromCoordinatorRequest,
                                       validator: (value) {
                                         // Skip the "required" check when the
                                         // user has already added other
@@ -2596,15 +2674,18 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                               horizontal: 12.0,
                               vertical: -5.0,
                             ),
-                            suffixIcon: IconButton(
-                              icon: const Icon(Icons.search),
-                              onPressed: () {
-                                FocusScope.of(context)
-                                    .requestFocus(FocusNode());
-                                _openMemberSearchBottomSheet(8003);
-                              },
-                            ),
+                            suffixIcon: _isFromCoordinatorRequest
+                                ? const Icon(Icons.lock_outline)
+                                : IconButton(
+                                    icon: const Icon(Icons.search),
+                                    onPressed: () {
+                                      FocusScope.of(context)
+                                          .requestFocus(FocusNode());
+                                      _openMemberSearchBottomSheet(8003);
+                                    },
+                                  ),
                           ),
+                          readOnly: _isFromCoordinatorRequest,
                           validator: (value) {
                             // Same exemption as Member ID above.
                             if (_guestEntries.isNotEmpty &&
@@ -2690,6 +2771,9 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                             ),
 
                         // ── Add More Guest ─────────────────────
+                        // Off the coordinator-request path the guest list is
+                        // fixed by the request.
+                        if (!_isFromCoordinatorRequest)
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton(

@@ -56,6 +56,7 @@ import 'package:ballys_reservation_app/screens/reservations/amendment_view_bally
 import 'package:ballys_reservation_app/screens/reservations/amendments_ballys_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/air_tickets_selection_ballys_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/air_tickets_selection_screen.dart';
+import 'package:ballys_reservation_app/models/coordinator_request.dart';
 import 'package:ballys_reservation_app/screens/reservations/coordinator_request_ballys_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/coordinator_requests_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/group_reservation_ballys_screen.dart';
@@ -494,7 +495,14 @@ class AppNavigation {
           pageBuilder: (context, state) => CustomTransitionPage(
             fullscreenDialog: false,
             key: state.pageKey,
-            child: const NewReservationBallysScreen(),
+            // Opened from a card on "My Coordinator Requests" with the request
+            // as `extra`: the coordinator keys in the reservation somebody
+            // else asked for. Null on the normal "new reservation" path.
+            child: NewReservationBallysScreen(
+              coordinatorRequest: state.extra is CoordinatorRequestRecord
+                  ? state.extra as CoordinatorRequestRecord
+                  : null,
+            ),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(
                 opacity: CurveTween(curve: Curves.easeInOutCirc).animate(animation),

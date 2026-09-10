@@ -203,11 +203,18 @@ Future<Map<String, dynamic>> _buildReservationBodyBallys(
       // once for the whole reservation rather than per room / per ticket.
       'payment_by': newReservation.paymentBy ?? '',
       'contact_person': newReservation.contactPerson ?? '',
-      'sales_code': salesCode,
+      // Normally the logged-in user's own sales code. A reservation keyed in
+      // off a coordinator request overrides it with the coordinator's id, and
+      // credits the marketing person who raised the request below.
+      'sales_code': (newReservation.salesCodeOverride?.trim().isNotEmpty ?? false)
+          ? newReservation.salesCodeOverride!.trim()
+          : salesCode,
       'user_name': userName,
       'device_id': deviceId,
       'selected_marketing_person':
           newReservation.selectedMarketingPerson ?? '',
+      'selected_marketing_person_code':
+          newReservation.selectedMarketingPersonCode ?? '',
       // Approver picked from `GetAuthorizationLevels` — who the reservation is
       // being sent to for approval. Always present; an untouched dropdown
       // sends it as an empty object.
