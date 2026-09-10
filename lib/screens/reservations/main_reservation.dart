@@ -247,7 +247,7 @@ class _ReservationMainScreenState extends ConsumerState<ReservationMainScreen>
                         child: GestureDetector(
                           onTap: () {
                             context.go(
-                              '/reservationMain/coordinator-request-ballys',
+                              '/reservationMain/coordinator-requests-ballys',
                             );
                           },
                           child: Card(

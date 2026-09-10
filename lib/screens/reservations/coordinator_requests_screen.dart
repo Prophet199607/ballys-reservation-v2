@@ -51,6 +51,19 @@ class _CoordinatorRequestsScreenState
           ),
         ],
       ),
+      // The write side lives on its own screen; pushed (not `go`) so coming
+      // back lands on this list again.
+      floatingActionButton: FloatingActionButton(
+        tooltip: 'New coordinator request',
+        backgroundColor: const Color.fromARGB(255, 63, 81, 181),
+        onPressed: () async {
+          await context.push('/reservationMain/coordinator-request-ballys');
+          if (!mounted) return;
+          // A request may have been sent while we were away.
+          ref.invalidate(myCoordinatorRequestsProvider);
+        },
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
       body: SafeArea(child: _requestList(fontSettings)),
     );
   }
