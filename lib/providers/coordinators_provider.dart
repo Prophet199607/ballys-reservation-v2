@@ -38,9 +38,9 @@ final loggedInCoordinatorIdProvider =
 
 /// The requests sent to the coordinator who is logged in, newest first.
 ///
-/// The login response carries only `Coordinatorid`, while the endpoint wants
-/// the name as well, so it is resolved off the cached [coordinatorsProvider]
-/// list.
+/// Both halves the endpoint matches on come straight from the login response
+/// in storage: `Coordinatorid` via [loggedInCoordinatorIdProvider] and the
+/// display name via `StorageUtil.getUserName()`.
 ///
 /// `autoDispose` so a request sent from this session shows up the next time
 /// the list is opened; `ref.invalidate` forces a refetch while it is on screen.
@@ -49,21 +49,14 @@ final myCoordinatorRequestsProvider =
   final coordinatorId = await ref.watch(loggedInCoordinatorIdProvider.future);
   if (coordinatorId == null) return const [];
 
-  final coordinators = await ref.watch(coordinatorsProvider.future);
-  final match = coordinators
-      .where((c) =>
-          c.coordinatorId.trim().toUpperCase() ==
-          coordinatorId.trim().toUpperCase())
-      .firstOrNull;
+  final coordinatorName = await StorageUtil.getUserName() ?? '';
 
-  debugPrint(
-      'Fetching requests for $coordinatorId / ${match?.name ?? '(no name match)'}');
+  debugPrint('Fetching requests for $coordinatorId / $coordinatorName');
 
   return ref
       .read(coordinatorRequestRepositoryProvider)
       .getRequestsByCoordinator(
         coordinatorId: coordinatorId,
-        // Unmatched id: send the name empty rather than guess at one.
-        coordinatorName: match?.name ?? '',
+        coordinatorName: coordinatorName,
       );
 });
