@@ -2626,13 +2626,19 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                                     ),
                             ),
                             const SizedBox(width: 10.0),
+                            // Guest profile lookup is off for a coordinator
+                            // request: the guest is fixed by the request, so
+                            // there is nothing to look up or swap here.
                             ElevatedButton(
-                              onPressed: _memberIdController.text.trim().isEmpty
+                              onPressed: (_isFromCoordinatorRequest ||
+                                      _memberIdController.text.trim().isEmpty)
                                   ? null
                                   : _navigateToProfile,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor:
-                                    _memberIdController.text.trim().isEmpty
+                                backgroundColor: (_isFromCoordinatorRequest ||
+                                        _memberIdController.text
+                                            .trim()
+                                            .isEmpty)
                                         ? Colors.grey.shade400
                                         : const Color.fromARGB(
                                             255, 70, 70, 70),
