@@ -28,6 +28,7 @@ class StorageUtil {
     bool? bgChk,
     bool? marketingP, {
     String? uName,
+    String? coordinatorId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await _clearPreservingDeviceConfig(prefs);
@@ -36,6 +37,11 @@ class StorageUtil {
     // written when present rather than clobbering it with an empty string.
     if (uName != null && uName.isNotEmpty) {
       await prefs.setString('uName', uName);
+    }
+    // Ballys only, and only for users who are themselves a coordinator, so it
+    // is written only when the login response carried one.
+    if (coordinatorId != null && coordinatorId.isNotEmpty) {
+      await prefs.setString('coordinatorId', coordinatorId);
     }
     await prefs.setString('userLevel', userLevel);
     await prefs.setString('salesCode', salesCode);
@@ -123,6 +129,15 @@ class StorageUtil {
   static Future<String?> getUserLevel() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('userLevel');
+  }
+
+  /// Coordinatorid from the login response. Null when the logged-in user is
+  /// not a coordinator, or on properties that do not send it.
+  static Future<String?> getCoordinatorId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString('coordinatorId');
+    if (id == null || id.isEmpty || id == 'null') return null;
+    return id;
   }
 
   static Future<String?> getSalesCode() async {

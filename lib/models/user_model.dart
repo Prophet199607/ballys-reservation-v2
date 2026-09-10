@@ -4,6 +4,9 @@ class User {
   final String userLevel;
   final String salesCode;
   final String marketingCode;
+  /// Coordinatorid from the login response — Ballys only, and only for users
+  /// who are themselves a coordinator. Null everywhere else.
+  final String? coordinatorId;
   final String? loginId;
   final String? mobileNumber;
   final bool? memProfSH;
@@ -21,6 +24,7 @@ class User {
     required this.userLevel,
     required this.salesCode,
     required this.marketingCode,
+    this.coordinatorId,
     this.mobileNumber,
     this.loginId,
     this.memProfSH,
@@ -41,6 +45,7 @@ class User {
       userLevel: json['User_Level'],
       salesCode: json['Sales_Code'],
       marketingCode: json['Marketing_Code'],
+      coordinatorId: parseCoordinatorId(json),
       mobileNumber: json['Mobile'],
       loginId: json['LoginID']?.toString(),
       memProfSH: json['Mem_Prof_SH'],
@@ -53,6 +58,19 @@ class User {
       bgChk: json['BG_CHK'],
       marketingP: parseMarketingP(json),
     );
+  }
+
+  /// Ballys spells the key "Coordinatorid"; the casing has moved before, so
+  /// the usual variants are read too. Empty and "null" both mean "not a
+  /// coordinator" and come back as null.
+  static String? parseCoordinatorId(Map<String, dynamic> json) {
+    final raw = json['Coordinatorid'] ??
+        json['CoordinatorId'] ??
+        json['Coordinator_Id'] ??
+        json['coordinator_id'];
+    final value = raw?.toString().trim() ?? '';
+    if (value.isEmpty || value.toLowerCase() == 'null') return null;
+    return value;
   }
 
   // The login response spells this key "MArketing_P" and may send it as a bool

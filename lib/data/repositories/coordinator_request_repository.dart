@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ballys_reservation_app/data/services/api_service.dart';
 import 'package:ballys_reservation_app/models/coordinator.dart';
+import 'package:ballys_reservation_app/models/coordinator_request.dart';
 import 'package:ballys_reservation_app/utils/device_id.dart';
 import 'package:ballys_reservation_app/utils/storage_util.dart';
 
@@ -43,6 +44,9 @@ class CoordinatorRequestRepository {
   /// `https://api.ballyscolombo.com/api/Ballys/CRM/Coordinators/Get`.
   static const String _coordinatorsEndpoint = 'Coordinators/Get';
 
+  /// The read side: every request sent to one coordinator.
+  static const String _requestsEndpoint = 'CoordinatorRequest/GetByCoordinator';
+
   /// GET `{baseUrl}/Coordinators/Get` — the coordinator picker list.
   ///
   /// The response is `{ success, count, coordinators: [...] }`. Inactive rows
@@ -64,6 +68,42 @@ class CoordinatorRequestRepository {
       ..sort((a, b) => a.name.compareTo(b.name));
 
     return coordinators;
+  }
+
+  /// GET `{baseUrl}/CoordinatorRequest/GetByCoordinator` — the requests sent to
+  /// one coordinator, newest first.
+  ///
+  /// The backend matches on the id *and* the name, so both go on the query;
+  /// the name carries spaces, hence the encoding.
+  Future<List<CoordinatorRequestRecord>> getRequestsByCoordinator({
+    required String coordinatorId,
+    required String coordinatorName,
+  }) async {
+    print('getRequestsByCoordinator: coordinatorId=$coordinatorId, coordinatorName=$coordinatorName');
+    final query = 'coordinatorId=${Uri.encodeQueryComponent(coordinatorId)}'
+        '&coordinatorName=${Uri.encodeQueryComponent(coordinatorName)}';
+    final response = await apiService.get('$_requestsEndpoint?$query');
+print('getRequestsByCoordinator response: $response');
+    if (response['success'] != true) return [];
+
+    final data = response['requests'];
+    if (data is! List) return [];
+
+    final requests = data
+        .whereType<Map>()
+        .map((item) =>
+            CoordinatorRequestRecord.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+
+    // Newest first — the API's order is not guaranteed.
+    requests.sort((a, b) {
+      final aDate = a.createdDate;
+      final bDate = b.createdDate;
+      if (aDate == null || bDate == null) return b.id.compareTo(a.id);
+      return bDate.compareTo(aDate);
+    });
+
+    return requests;
   }
 
   Future<CoordinatorRequestResult> saveCoordinatorRequest({

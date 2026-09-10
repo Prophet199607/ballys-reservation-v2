@@ -57,6 +57,7 @@ import 'package:ballys_reservation_app/screens/reservations/amendments_ballys_sc
 import 'package:ballys_reservation_app/screens/reservations/air_tickets_selection_ballys_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/air_tickets_selection_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/coordinator_request_ballys_screen.dart';
+import 'package:ballys_reservation_app/screens/reservations/coordinator_requests_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/group_reservation_ballys_screen.dart';
 import 'package:ballys_reservation_app/screens/reservations/main_reservation.dart';
 import 'package:ballys_reservation_app/screens/reservations/air_ticket_amendment_ballys_screen.dart';
@@ -709,6 +710,23 @@ class AppNavigation {
         fullscreenDialog: false,
         key: state.pageKey,
         child: const CoordinatorRequestBallysScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: CurveTween(curve: Curves.easeInOutCirc).animate(animation),
+            child: child,
+          );
+        },
+      ),
+    ),
+
+    // The read side of the above — every coordinator request the logged-in
+    // user has sent.
+    GoRoute(
+      path: 'coordinator-requests-ballys',
+      pageBuilder: (context, state) => CustomTransitionPage(
+        fullscreenDialog: false,
+        key: state.pageKey,
+        child: const CoordinatorRequestsScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(
             opacity: CurveTween(curve: Curves.easeInOutCirc).animate(animation),

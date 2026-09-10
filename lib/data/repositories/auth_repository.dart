@@ -113,6 +113,9 @@ print("hellooo");
           userLevel: tableData['User_Level'].toString(),
           salesCode: tableData['Sales_Code'].toString(),
           marketingCode: tableData['Marketing_Code'].toString(),
+          // Ballys sends Coordinatorid when the user is a coordinator; it is
+          // what the coordinator-request list is fetched by.
+          coordinatorId: User.parseCoordinatorId(tableData),
           mobileNumber: tableData['Mobile'].toString(),
           memProfSH: tableData['Mem_Prof_SH'],
           giftApp: tableData['Gift_App'],

@@ -407,6 +407,15 @@ class _CoordinatorRequestBallysScreenState
             }
           },
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Sent requests',
+            icon: const Icon(Icons.history),
+            onPressed: () => context.push(
+              '/reservationMain/coordinator-requests-ballys',
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Stack(
