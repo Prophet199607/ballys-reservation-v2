@@ -87,6 +87,11 @@ class _AirTicketsSelectionBallysScreenState
   /// carried through untouched so nothing already picked is dropped.
   List<PassportFileBallys> _otherPassports = [];
 
+  /// Set when a ticket was added or the changes accepted with a guest still
+  /// missing their bio page, which marks the upload area red until one is
+  /// picked. A ticket is issued against a passport, so it is required.
+  bool _passportError = false;
+
   /// Bellagio (bty.world) hides the Hamoos contact person dropdown.
   bool _isBellagio = false;
 
@@ -516,7 +521,10 @@ class _AirTicketsSelectionBallysScreenState
       return PassportUploadWidgetBallys(
         initialFiles: _otherPassports,
         onFilesChanged: (files) {
-          setState(() => _otherPassports = List.from(files));
+          setState(() {
+            _otherPassports = List.from(files);
+            _passportError = false;
+          });
         },
       );
     }
@@ -532,7 +540,10 @@ class _AirTicketsSelectionBallysScreenState
         decoration: BoxDecoration(
           color: Colors.grey.shade100,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.grey.shade300),
+          border: Border.all(
+            color: _passportError ? Colors.red : Colors.grey.shade300,
+            width: _passportError ? 1.4 : 1,
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -544,14 +555,17 @@ class _AirTicketsSelectionBallysScreenState
             const SizedBox(height: 6),
             Text(
               "Select a guest above to upload their passport bio page.",
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: 14,
+                color: _passportError ? Colors.red : Colors.grey.shade600,
+              ),
             ),
           ],
         ),
       );
     }
 
-    return Column(
+    final uploaders = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (var i = 0; i < selected.length; i++) ...[
@@ -559,6 +573,19 @@ class _AirTicketsSelectionBallysScreenState
           _guestPassportUploader(selected[i]),
         ],
       ],
+    );
+
+    // Untouched until a save complains, so the uploaders keep their own look
+    // until there is something to point at.
+    if (!_passportError) return uploaders;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.red, width: 1.4),
+      ),
+      child: uploaders,
     );
   }
 
@@ -583,7 +610,10 @@ class _AirTicketsSelectionBallysScreenState
       guestName: guest.guestName.trim(),
       initialFiles: _passportsByGuest[key] ?? const [],
       onFilesChanged: (files) {
-        setState(() => _passportsByGuest[key] = List.from(files));
+        setState(() {
+          _passportsByGuest[key] = List.from(files);
+          _passportError = false;
+        });
       },
     );
   }
@@ -885,6 +915,74 @@ class _AirTicketsSelectionBallysScreenState
         .toList();
   }
 
+  /// Whether every guest ticked for the ticket being added has their bio page
+  /// picked. With nobody to tick yet the page goes to whoever ends up owning
+  /// the ticket, so one file is all that can be asked for.
+  bool _requireTicketPassports() {
+    final selected = widget.guests
+        .where((guest) => _assignedGuestKeys.contains(_guestKey(guest)))
+        .toList();
+
+    if (selected.isEmpty) {
+      if (_otherPassports.isNotEmpty) return true;
+      _reportMissingPassport();
+      return false;
+    }
+
+    for (final guest in selected) {
+      if ((_passportsByGuest[_guestKey(guest)] ?? const []).isNotEmpty) {
+        continue;
+      }
+      _reportMissingPassport(guest: guest);
+      return false;
+    }
+    return true;
+  }
+
+  /// Whether every guest already booked on a ticket has their bio page picked.
+  /// The per-ticket check above covers tickets added on this visit; this one
+  /// also catches tickets restored from a reservation that never had one.
+  bool _requireAllPassports() {
+    if (widget.guests.isEmpty) {
+      if (_otherPassports.isNotEmpty) return true;
+      _reportMissingPassport();
+      return false;
+    }
+
+    for (final guest in widget.guests) {
+      final booked = flightList
+          .any((flight) => flight.assignedGuests.any((a) => _namesGuest(a, guest)));
+      if (!booked) continue;
+      if ((_passportsByGuest[_guestKey(guest)] ?? const []).isNotEmpty) {
+        continue;
+      }
+      _reportMissingPassport(guest: guest);
+      return false;
+    }
+    return true;
+  }
+
+  /// Marks the upload area and says whose page is missing — a ticket already
+  /// added names its guest, so the fix is to edit that ticket, which ticks them
+  /// back and brings their uploader up.
+  void _reportMissingPassport({AccompanyingMember? guest}) {
+    final who = guest == null
+        ? ""
+        : (guest.guestName.trim().isNotEmpty
+            ? guest.guestName.trim()
+            : guest.mid.trim());
+    setState(() => _passportError = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          "Please upload the passport bio data page"
+          "${who.isEmpty ? '' : ' for $who'}.",
+        ),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
   void _removeFlight(int index) {
     setState(() {
       flightList.removeAt(index);
@@ -956,6 +1054,11 @@ class _AirTicketsSelectionBallysScreenState
         return;
       }
     }
+
+    // A ticket cannot be issued without the traveller's bio page, and the
+    // uploader for it is on screen only while its guest is ticked — so it is
+    // asked for here rather than after the ticket is banked.
+    if (!_requireTicketPassports()) return;
 
     // Cost is optional — no blocking if not calculated
 
@@ -1040,6 +1143,9 @@ class _AirTicketsSelectionBallysScreenState
   }
 
   void _acceptChanges() {
+    // Last guard before the tickets go back to the reservation: a ticket
+    // restored from an existing reservation may never have had a bio page.
+    if (!_requireAllPassports()) return;
     ref.read(selectedFlightBallysProvider.notifier).addFlights(flightList);
     ref.read(selectedPassportBallysProvider.notifier).setFiles(_allPassports());
     Navigator.pop(context);

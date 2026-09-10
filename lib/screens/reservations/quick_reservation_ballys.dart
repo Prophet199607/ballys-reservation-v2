@@ -297,6 +297,11 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
   List<PassportFileBallys> _a_passportFiles = [];
   Key _a_passportUploadKey = UniqueKey();
 
+  /// Set when a save or "Add Another Air Ticket" was attempted with a guest
+  /// still missing their bio page, which marks the upload card red until one
+  /// is picked.
+  bool _a_passportError = false;
+
   // ── TRANSPORT members list ─────────────────────────────────────────────────
   List<Map<String, dynamic>> _transportMembers = [];
 
@@ -1043,6 +1048,7 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
     // starts with empty uploaders.
     _a_passportsByGuest.clear();
     _a_passportUploadKey = UniqueKey();
+    _a_passportError = false;
   }
 
   // ── Add another air ticket to the current pending-guest form ────────────────
@@ -1074,6 +1080,7 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
     // they fly, or it can never be told apart from the next one on save.
     if (!_requireAirGuestAssignment()) return;
     if (!_requireAirTicketClass()) return;
+    if (!_requireAirPassports()) return;
     setState(() {
       _pendingAirTickets.add(_captureCurrentAirTicket());
       // The banked ticket took its guests with it; the next one starts unticked
@@ -1546,6 +1553,45 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
     setState(() => _a_classError = true);
     _showSaveErrorSnack('Please select at least one class for this air ticket');
     return false;
+  }
+
+  /// A ticket is issued against a passport, so every guest it is booked for has
+  /// to have their bio page picked before it can be banked or saved. With
+  /// nobody ticked yet the page goes to whoever ends up owning the ticket, so
+  /// one file is all that can be asked for.
+  bool _requireAirPassports() {
+    final selected = _airAssignableGuests
+        .where((guest) => _a_assignedGuestKeys.contains(_guestKey(guest)))
+        .toList();
+
+    if (selected.isEmpty) {
+      if (_a_passportFiles.isNotEmpty) return true;
+      setState(() {
+        _a_passportError = true;
+        _airStep = 1;
+      });
+      _showSaveErrorSnack('Please upload the passport bio data page');
+      return false;
+    }
+
+    for (final guest in selected) {
+      if ((_a_passportsByGuest[_guestKey(guest)] ?? const []).isNotEmpty) {
+        continue;
+      }
+      final who = guest.guestName.trim().isNotEmpty
+          ? guest.guestName.trim()
+          : guest.mid.trim();
+      setState(() {
+        _a_passportError = true;
+        _airStep = 1;
+      });
+      _showSaveErrorSnack(
+        'Please upload the passport bio data page'
+        '${who.isEmpty ? '' : ' for $who'}',
+      );
+      return false;
+    }
+    return true;
   }
 
   /// "Payment By" is mandatory on both tabs and starts unanswered, so a save
@@ -2579,6 +2625,7 @@ Remarks              : ${m['remarks']}''';
     if (_pendingAirTickets.isEmpty || _hasCurrentAirTicket) {
       if (!_requireAirGuestAssignment()) return;
       if (!_requireAirTicketClass()) return;
+      if (!_requireAirPassports()) return;
     }
 
     if (!_requireAirPaymentBy()) return;
@@ -6007,7 +6054,12 @@ class _AirForm extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(
+                color: state._a_passportError
+                    ? Colors.red
+                    : Colors.grey.shade300,
+                width: state._a_passportError ? 1.4 : 1,
+              ),
             ),
             child: _passportSection(accent),
           ),
@@ -6079,8 +6131,10 @@ class _AirForm extends StatelessWidget {
       return PassportUploadWidgetBallys(
         key: state._a_passportUploadKey,
         initialFiles: state._a_passportFiles,
-        onFilesChanged: (files) =>
-            state.setState(() => state._a_passportFiles = List.from(files)),
+        onFilesChanged: (files) => state.setState(() {
+          state._a_passportFiles = List.from(files);
+          state._a_passportError = false;
+        }),
       );
     }
 
@@ -6105,7 +6159,12 @@ class _AirForm extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             'Select a guest above to upload their passport bio page.',
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+            style: TextStyle(
+              fontSize: 14,
+              color: state._a_passportError
+                  ? Colors.red
+                  : Colors.grey.shade600,
+            ),
           ),
         ],
       );
@@ -6143,9 +6202,10 @@ class _AirForm extends StatelessWidget {
       guestBmNumber: guest.mid.trim(),
       guestName: guest.guestName.trim(),
       initialFiles: state._a_passportsByGuest[key] ?? const [],
-      onFilesChanged: (files) => state.setState(
-        () => state._a_passportsByGuest[key] = List.from(files),
-      ),
+      onFilesChanged: (files) => state.setState(() {
+        state._a_passportsByGuest[key] = List.from(files);
+        state._a_passportError = false;
+      }),
     );
   }
 }

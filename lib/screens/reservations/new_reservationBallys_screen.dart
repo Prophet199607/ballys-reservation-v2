@@ -106,6 +106,11 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
   bool hasError = false;
   String? _hotelError;
   String? _airTicketError;
+
+  /// A booked air ticket cannot be issued without the traveller's bio page, so
+  /// the reservation is held until one has been picked on the air ticket
+  /// screen. Set while that page is missing, cleared with the other errors.
+  String? _passportError;
   bool _isNumericOnlyLocation = false;
   bool _isGuestLoading = false;
   List<String> _prefixes = ["BM", "BL", "BN"];
@@ -1135,10 +1140,27 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
     }
   }
 
+  /// Whether the air ticket on screen carries the traveller's passport bio
+  /// page. Tickets are issued against a passport, so booking one without the
+  /// page uploaded on the air ticket screen is stopped here rather than going
+  /// out incomplete. A reservation with no air ticket is not asked for one.
+  bool _hasAirTicketPassport() {
+    final selectedFlights = ref.read(selectedFlightBallysProvider);
+    final needsPassport =
+        _airTicketRequisition == "Yes" || selectedFlights.isNotEmpty;
+    if (!needsPassport) return true;
+    if (ref.read(selectedPassportBallysProvider).isNotEmpty) return true;
+
+    setState(() => _passportError =
+        "Please upload the passport bio data page for the air ticket");
+    return false;
+  }
+
   bool _validateUpdateFields() {
     setState(() {
       _hotelError = null;
       _airTicketError = null;
+      _passportError = null;
       hasError = false;
     });
 
@@ -1169,6 +1191,8 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
           "Please select at least one flight when air ticket requisition is 'Yes'");
       hasError = true;
     }
+
+    if (!_hasAirTicketPassport()) hasError = true;
 
     if (selectedFlights.isNotEmpty &&
         _arrivalDate != null &&
@@ -1621,6 +1645,7 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
     setState(() {
       _hotelError = null;
       _airTicketError = null;
+      _passportError = null;
       hasError = false;
     });
 
@@ -1644,6 +1669,7 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
             () => _airTicketError = "Please select at least one flight");
         hasError = true;
       }
+      if (!_hasAirTicketPassport()) hasError = true;
       if (hasError) return;
 
       if (!_validateExtraMembers(
@@ -1666,6 +1692,29 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please add at least one guest'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // A guest banked as a card keeps their own passports, so the check above —
+    // which only sees what is on screen — would miss one added without a bio
+    // page. Tickets are issued against a passport, so the save stops on it.
+    for (final guest in allGuests) {
+      final booksAirTicket =
+          guest.flights.isNotEmpty || guest.airTicketRequisition == "Yes";
+      if (!booksAirTicket || guest.passportImages.isNotEmpty) continue;
+
+      final who = guest.guestName.trim().isNotEmpty
+          ? guest.guestName.trim()
+          : guest.mid.trim();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Please upload the passport bio data page for the air ticket'
+            '${who.isEmpty ? '' : ' — $who'}',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -1768,6 +1817,7 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
         _editingGuestIndex = null;
         _hotelError = null;
         _airTicketError = null;
+        _passportError = null;
         hasError = false;
       });
 
@@ -3066,6 +3116,34 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                                     );
                                   }).toList(),
                                 ),
+                          // The bio page itself is picked on the air ticket
+                          // screen, so the complaint sits under the selector
+                          // that leads there.
+                          if (_passportError != null)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                  left: 12.0, top: 8.0),
+                              child: Row(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.error_outline,
+                                      color: Colors.red, size: 16),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      _passportError!,
+                                      style: TextStyle(
+                                        color: Colors.red,
+                                        fontSize:
+                                            fontSettings.fontSize * 0.75,
+                                        fontWeight: fontSettings.fontWeight,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                    
                         const SizedBox(height: 10.0),
