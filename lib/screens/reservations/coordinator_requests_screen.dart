@@ -122,33 +122,40 @@ class _CoordinatorRequestsScreenState
             Row(
               children: [
                 _requestTypeChip(fontSettings, r.requestType),
-                const Spacer(),
-                if (r.createdDate != null)
-                  Text(
-                    _dateFormat.format(r.createdDate!),
-                    style: TextStyle(
-                      fontSize: fontSettings.fontSize - 6,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
               ],
             ),
             const SizedBox(height: 8),
-            // Who it was handed to — the list spans every coordinator now.
+            // Who raised it. The list is already scoped to the logged-in
+            // coordinator, so the requester is what this card has to name.
             Row(
               children: [
-                Icon(Icons.support_agent,
-                    size: 16, color: Colors.grey.shade700),
+                Icon(Icons.account_circle_outlined,
+                    size: 18, color: Colors.grey.shade700),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text(
-                    r.coordinatorName,
+                  child: RichText(
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: fontSettings.fontSize - 4,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey.shade800,
+                    text: TextSpan(
+                      style: TextStyle(
+                        fontSize: fontSettings.fontSize,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade800,
+                      ),
+                      children: [
+                        TextSpan(
+                          text: r.userName.isEmpty ? 'Unknown user' : r.userName,
+                        ),
+                        // if (r.salesCode.isNotEmpty)
+                        //   TextSpan(
+                        //     text: '  (${r.salesCode})',
+                        //     style: TextStyle(
+                        //       fontWeight: FontWeight.normal,
+                        //       fontSize: fontSettings.fontSize ,
+                        //       color: Colors.grey.shade600,
+                        //     ),
+                        //   ),
+                      ],
                     ),
                   ),
                 ),
@@ -198,27 +205,40 @@ class _CoordinatorRequestsScreenState
                 ),
                 child: Text(
                   r.remarks,
-                  style: TextStyle(fontSize: fontSettings.fontSize - 4),
+                  style: TextStyle(fontSize: fontSettings.fontSize),
                 ),
               ),
             ],
             const SizedBox(height: 8),
             Row(
               children: [
-                Icon(Icons.tag, size: 14, color: Colors.grey.shade600),
+                // When it was raised, under the guests rather than up top.
+                Icon(Icons.schedule, size: 14, color: Colors.grey.shade600),
                 const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    // The reference the save returned.
-                    r.masterId,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: fontSettings.fontSize - 6,
-                      color: Colors.grey.shade600,
-                    ),
+                Text(
+                  r.createdDate == null
+                      ? '—'
+                      : _dateFormat.format(r.createdDate!),
+                  style: TextStyle(
+                    fontSize: fontSettings.fontSize,
+                    color: Colors.grey.shade600,
                   ),
                 ),
+               // const Spacer(),
+              //  Icon(Icons.tag, size: 14, color: Colors.grey.shade600),
+               // const SizedBox(width: 4),
+                // Flexible(
+                //   child: Text(
+                //     // The reference the save returned.
+                //     r.masterId,
+                //     maxLines: 1,
+                //     overflow: TextOverflow.ellipsis,
+                //     style: TextStyle(
+                //       fontSize: fontSettings.fontSize - 6,
+                //       color: Colors.grey.shade600,
+                //     ),
+                //   ),
+                // ),
               ],
             ),
           ],
