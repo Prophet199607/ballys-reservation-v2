@@ -634,7 +634,7 @@ class _CoordinatorRequestBallysScreenState
         fontWeight: fontSettings.fontWeight,
       ),
       decoration: InputDecoration(
-        labelText: 'Guest BM Number',
+        labelText: 'BM Number',
         labelStyle: TextStyle(
           fontSize: fontSettings.fontSize,
           fontWeight: fontSettings.fontWeight,
