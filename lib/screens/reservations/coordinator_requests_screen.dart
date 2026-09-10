@@ -5,6 +5,7 @@ import 'package:ballys_reservation_app/providers/font_settings_provider.dart';
 import 'package:ballys_reservation_app/providers/selected_flight_provider_ballys.dart';
 import 'package:ballys_reservation_app/providers/selected_hotel_provider_ballys.dart';
 import 'package:ballys_reservation_app/providers/selectedReservationforBallys_provider.dart';
+import 'package:ballys_reservation_app/utils/storage_util.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -27,6 +28,24 @@ class CoordinatorRequestsScreen extends ConsumerStatefulWidget {
 class _CoordinatorRequestsScreenState
     extends ConsumerState<CoordinatorRequestsScreen> {
   final DateFormat _dateFormat = DateFormat('dd MMM yyyy, hh:mm a');
+
+  /// Level 3 users may read their requests but not raise new ones, so the
+  /// "New coordinator request" button is not drawn for them. Null until the
+  /// level is read back from storage — the button stays hidden until then
+  /// rather than flashing in for a level 3 user.
+  String? _userLevel;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserLevel();
+  }
+
+  Future<void> _loadUserLevel() async {
+    final userLevel = await StorageUtil.getUserLevel();
+    if (!mounted) return;
+    setState(() => _userLevel = userLevel);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,17 +75,20 @@ class _CoordinatorRequestsScreenState
       ),
       // The write side lives on its own screen; pushed (not `go`) so coming
       // back lands on this list again.
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'New coordinator request',
-        backgroundColor: const Color.fromARGB(255, 63, 81, 181),
-        onPressed: () async {
-          await context.push('/reservationMain/coordinator-request-ballys');
-          if (!mounted) return;
-          // A request may have been sent while we were away.
-          ref.invalidate(myCoordinatorRequestsProvider);
-        },
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      floatingActionButton: (_userLevel == null || _userLevel == '3')
+          ? null
+          : FloatingActionButton(
+              tooltip: 'New coordinator request',
+              backgroundColor: const Color.fromARGB(255, 63, 81, 181),
+              onPressed: () async {
+                await context
+                    .push('/reservationMain/coordinator-request-ballys');
+                if (!mounted) return;
+                // A request may have been sent while we were away.
+                ref.invalidate(myCoordinatorRequestsProvider);
+              },
+              child: const Icon(Icons.add, color: Colors.white),
+            ),
       body: SafeArea(child: _requestList(fontSettings)),
     );
   }
