@@ -656,9 +656,56 @@ class _TransportAddScreenState extends ConsumerState<TransportAddScreen>
     return true;
   }
 
+  /// Names of the required fields that are still empty/invalid, in the same
+  /// order they appear on the page.
+  List<String> _missingRequiredFields() {
+    final missing = <String>[];
+    void check(bool isMissing, String label) {
+      if (isMissing) missing.add(label);
+    }
+
+    check(_midNumberCtrl.text.trim().isEmpty, 'Membership No');
+    check(_pickupDateCtrl.text.trim().isEmpty, 'Pickup Date');
+    check(_pickupTimeCtrl.text.trim().isEmpty, 'Pickup Time');
+    check(
+      _carTypes.any((c) => c == null || c.trim().isEmpty),
+      'Car Type',
+    );
+    check((_hireType ?? '').trim().isEmpty, 'Hire Type');
+    check(_pickupLocationCtrl.text.trim().isEmpty, 'Pickup Location');
+    check(_dropLocationCtrl.text.trim().isEmpty, 'Drop Location');
+
+    final digits = _contactNumberCtrl.text.trim();
+    if (digits.isEmpty) {
+      missing.add('Guest Mobile');
+    } else if (digits.length < _kMinContactDigits ||
+        digits.length > _kMaxContactDigits) {
+      missing.add(
+        'Guest Mobile ($_kMinContactDigits-$_kMaxContactDigits digits)',
+      );
+    }
+    return missing;
+  }
+
+  /// Runs the form validators and, when something fails, names the offending
+  /// fields in a bottom snack bar — the inline errors alone are easy to miss
+  /// because the failing field is usually scrolled off-screen.
+  bool _validateForm() {
+    if (_formKey.currentState?.validate() ?? false) return true;
+    final missing = _missingRequiredFields();
+    _showErrorSnack(
+      missing.isEmpty
+          ? 'Please fill all required fields'
+          : missing.length == 1
+              ? '${missing.first} is required'
+              : 'Required: ${missing.join(', ')}',
+    );
+    return false;
+  }
+
   void _applyAndAddMember() {
     if (!_requireGuest()) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_validateForm()) return;
     setState(() {
       _members.add(_captureCurrentMember());
       _clearGuestFields();
@@ -669,7 +716,7 @@ class _TransportAddScreenState extends ConsumerState<TransportAddScreen>
 
   void _addMemberWithSameDetails() {
     if (!_requireGuest()) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_validateForm()) return;
     setState(() {
       _members.add(_captureCurrentMember());
       _clearGuestFields();
@@ -774,7 +821,7 @@ class _TransportAddScreenState extends ConsumerState<TransportAddScreen>
 
     // Only validate the on-screen form when it still holds a member that
     // will be submitted — after "Apply & Add" it is cleared on purpose.
-    if (hasCurrentGuest && !(_formKey.currentState?.validate() ?? false)) {
+    if (hasCurrentGuest && !_validateForm()) {
       return;
     }
 
@@ -901,7 +948,7 @@ class _TransportAddScreenState extends ConsumerState<TransportAddScreen>
           ],
         ),
         backgroundColor: Colors.red.shade700,
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
