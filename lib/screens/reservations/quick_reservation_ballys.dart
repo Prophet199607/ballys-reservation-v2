@@ -55,8 +55,8 @@ const List<String> kCarTypes = [
 ];
 
 const List<String> kHireTypes = [
-  'Pickup',
-  'Drop',
+  'Airport Pickup',
+  'Airport Drop',
 ];
 
 // Digit count allowed in the contact number, excluding the country code.
@@ -1374,6 +1374,15 @@ class _QuickReservationBallysScreenState extends ConsumerState<QuickReservationB
         .where((guest) => !locked.contains(_guestKey(guest)))
         .toList();
   }
+
+  /// Whether a guest is left over once the one in the form is banked — "Add
+  /// Another… for Other Guest" has nobody to serve when every guest still free
+  /// is already ticked above.
+  bool get _hasOtherHotelGuest => _selectableHotelGuests()
+      .any((guest) => !_h_assignedGuestKeys.contains(_guestKey(guest)));
+
+  bool get _hasOtherAirGuest => _selectableAirGuests()
+      .any((guest) => !_a_assignedGuestKeys.contains(_guestKey(guest)));
 
   /// The ticked guests as they travel on the booking, in reservation order.
   List<AssignedGuest> _selectedHotelGuests() => _hotelAssignableGuests
@@ -3406,11 +3415,12 @@ Widget _extraMemberCard(
 
 /// Full-width outlined button that banks the booking currently in the form and
 /// clears it for the next one — "Add Another Hotel" / "Add Another Air Ticket".
+/// A null [onPressed] greys it out: there is no other guest left to add for.
 Widget _addAnotherButton({
   required Color accent,
   required IconData icon,
   required String label,
-  required VoidCallback onPressed,
+  required VoidCallback? onPressed,
 }) {
   return SizedBox(
     width: double.infinity,
@@ -3418,7 +3428,12 @@ Widget _addAnotherButton({
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         foregroundColor: accent,
-        side: BorderSide(color: accent.withOpacity(0.6), width: 1.5),
+        side: BorderSide(
+          color: onPressed == null
+              ? Colors.grey.shade300
+              : accent.withOpacity(0.6),
+          width: 1.5,
+        ),
         padding: const EdgeInsets.symmetric(vertical: 13),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
@@ -5171,8 +5186,9 @@ class _HotelForm extends StatelessWidget {
           _addAnotherButton(
             accent: accent,
             icon: Icons.add_business_rounded,
-            label: 'Add Another Hotel for This Guest',
-            onPressed: state._addAnotherHotel,
+            label: 'Add Another Hotel for Other Guest',
+            onPressed:
+                state._hasOtherHotelGuest ? state._addAnotherHotel : null,
           ),
           const SizedBox(height: 12),
 
@@ -6069,8 +6085,9 @@ class _AirForm extends StatelessWidget {
           _addAnotherButton(
             accent: accent,
             icon: Icons.flight_takeoff_rounded,
-            label: 'Add Another Air Ticket for This Guest',
-            onPressed: state._addAnotherAirTicket,
+            label: 'Add Another Air Ticket for Other Guest',
+            onPressed:
+                state._hasOtherAirGuest ? state._addAnotherAirTicket : null,
           ),
           const SizedBox(height: 12),
 
@@ -6389,14 +6406,14 @@ class _TransportForm extends StatelessWidget {
             accent: accent,
             onChanged: state._syncVehicleDetailsWithCount,
           ),
-          const SizedBox(height: 12),
-          _YesNoRadioRow(
-            label: 'Airport Pickup/ Drop',
-            icon: Icons.flight_land_rounded,
-            value: state._t_airportPickup,
-            accent: accent,
-            onChanged: (v) => state.setState(() => state._t_airportPickup = v),
-          ),
+          // const SizedBox(height: 12),
+          // _YesNoRadioRow(
+          //   label: 'Airport Pickup/ Drop',
+          //   icon: Icons.flight_land_rounded,
+          //   value: state._t_airportPickup,
+          //   accent: accent,
+          //   onChanged: (v) => state.setState(() => state._t_airportPickup = v),
+          // ),
           const SizedBox(height: 12),
 
           // ── Car type + passengers, one row per vehicle ────────────────────────
