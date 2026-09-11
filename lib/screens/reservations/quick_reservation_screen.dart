@@ -1069,13 +1069,58 @@ class _QuickReservationScreenState extends ConsumerState<QuickReservationScreen>
     _t_passportUploadKey = UniqueKey();
   }
 
+  /// Names of the transport tab's required fields that are still
+  /// empty/invalid, in the same order they appear on the page.
+  List<String> _missingTransportRequiredFields() {
+    final missing = <String>[];
+    void check(bool isMissing, String label) {
+      if (isMissing) missing.add(label);
+    }
+
+    check(_sharedMidNumber.text.trim().isEmpty, 'Membership No');
+    check(_t_pickupDateCtrl.text.trim().isEmpty, 'Pickup Date');
+    check(_t_pickupTimeCtrl.text.trim().isEmpty, 'Pickup Time');
+    check(
+      _t_carTypes.any((c) => c == null || c.trim().isEmpty),
+      'Car Type',
+    );
+    check((_t_hireType ?? '').trim().isEmpty, 'Hire Type');
+    check(_t_pickupLocationCtrl.text.trim().isEmpty, 'Pickup Location');
+    check(_t_dropLocationCtrl.text.trim().isEmpty, 'Drop Location');
+
+    final digits = _t_contactNumber.text.trim();
+    if (digits.isEmpty) {
+      missing.add('Guest Mobile');
+    } else if (digits.length < kMinContactDigits ||
+        digits.length > kMaxContactDigits) {
+      missing.add('Guest Mobile ($kMinContactDigits-$kMaxContactDigits digits)');
+    }
+    return missing;
+  }
+
+  /// Runs the transport form validators and, when something fails, names the
+  /// offending fields in a bottom snack bar — the inline errors alone are easy
+  /// to miss because the failing field is usually scrolled off-screen.
+  bool _validateTransportForm() {
+    if (_transportFormKey.currentState?.validate() ?? false) return true;
+    final missing = _missingTransportRequiredFields();
+    _showSaveErrorSnack(
+      missing.isEmpty
+          ? 'Please fill all required fields'
+          : missing.length == 1
+              ? '${missing.first} is required'
+              : 'Required: ${missing.join(', ')}',
+    );
+    return false;
+  }
+
   void _applyAndAddTransportMember() {
     if (_sharedGuestName.text.trim().isEmpty &&
         _sharedMemberId.text.trim().isEmpty) {
       _showRequiredSnack();
       return;
     }
-    if (!(_transportFormKey.currentState?.validate() ?? false)) return;
+    if (!_validateTransportForm()) return;
     setState(() {
       _transportMembers.add(_captureCurrentTransportMember());
       _resetSharedGuest();
@@ -1091,7 +1136,7 @@ class _QuickReservationScreenState extends ConsumerState<QuickReservationScreen>
       _showRequiredSnack();
       return;
     }
-    if (!(_transportFormKey.currentState?.validate() ?? false)) return;
+    if (!_validateTransportForm()) return;
     setState(() {
       _transportMembers.add(_captureCurrentTransportMember());
       _resetSharedGuest();
@@ -1897,7 +1942,7 @@ Remarks              : ${m['remarks']}''';
 
     // Only validate the on-screen form when it still holds a member that
     // will be submitted — after "Apply & Add" it is cleared on purpose.
-    if (hasCurrentGuest && !(_transportFormKey.currentState?.validate() ?? false)) {
+    if (hasCurrentGuest && !_validateTransportForm()) {
       return;
     }
 
