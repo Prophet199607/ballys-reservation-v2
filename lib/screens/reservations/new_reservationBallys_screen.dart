@@ -3544,6 +3544,11 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                               () => _selectedContactPerson = value,
                             ),
                             decoratorProps: DropDownDecoratorProps(
+                              baseStyle: TextStyle(
+                                fontSize: fontSettings.fontSize,
+                                fontWeight: fontSettings.fontWeight,
+                                color: Colors.black,
+                              ),
                               decoration: InputDecoration(
                                 labelText: "Hamoos Contact Person",
                                 labelStyle: TextStyle(
@@ -3558,10 +3563,26 @@ class _NewReservationBallysScreenState extends ConsumerState<NewReservationBally
                             ),
                             popupProps: PopupProps.menu(
                               showSearchBox: true,
-                              searchFieldProps: const TextFieldProps(
-                                decoration: InputDecoration(
+                              searchFieldProps: TextFieldProps(
+                                style: TextStyle(
+                                  fontSize: fontSettings.fontSize,
+                                  fontWeight: fontSettings.fontWeight,
+                                ),
+                                decoration: const InputDecoration(
                                   hintText: "Search contact person",
                                   border: OutlineInputBorder(),
+                                ),
+                              ),
+                              itemBuilder:
+                                  (context, item, isDisabled, isSelected) =>
+                                      ListTile(
+                                selected: isSelected,
+                                title: Text(
+                                  item,
+                                  style: TextStyle(
+                                    fontSize: fontSettings.fontSize,
+                                    fontWeight: fontSettings.fontWeight,
+                                  ),
                                 ),
                               ),
                             ),
